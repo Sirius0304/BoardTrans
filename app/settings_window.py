@@ -730,7 +730,9 @@ class SettingsWindow:
         size_text = info["size_text"]
         tip = (f"即将下载：{info['title']}（{size_text}）。\n\n"
                "这是本软件唯一需要联网的操作，翻译过程本身完全离线。\n"
-               "下载可以随时点「取消」，已经下载的部分下次会接着下。")
+               "下载会自动开启并发加速（多连接同时下），速度比单连接快很多。\n"
+               "中途可以随时点「取消」；取消后再点下载会重新开始（因为并发下载"
+               "无法从断点接续，不过加速后整体耗时已经短很多）。")
         if need_base:
             tip += "\n\n注意：日文方向还需要「中译英」基础模型（约 71 MB），本次会一并下载。"
         if not messagebox.askokcancel("开始下载模型", tip, parent=self.root):

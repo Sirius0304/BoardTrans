@@ -46,7 +46,7 @@ class AutoAnswer:
 
 
 def test_cancel_download():
-    print("\n=== 1. 下载取消（真实网络，2 秒后取消）===")
+    print("\n=== 1. 下载取消与重新下载（真实网络）===")
     cancel = threading.Event()
     dest = os.path.join(paths.models_dir(), "_cancel_test.bin")
     if os.path.exists(dest):
@@ -54,10 +54,14 @@ def test_cancel_download():
 
     url = models.PACKAGES["zh_en"]["url"]
     result = {}
+    progress_count = [0]
+
+    def cb(*_a):
+        progress_count[0] += 1
 
     def worker():
         try:
-            models._open_with_progress(url, dest, lambda *a: None, "测试下载", cancel_event=cancel)
+            models._open_with_progress(url, dest, cb, "测试下载", cancel_event=cancel)
             result["outcome"] = "完成"
         except models.DownloadCancelled:
             result["outcome"] = "已取消"
@@ -66,37 +70,39 @@ def test_cancel_download():
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
-    # 等真正开始收到数据（TLS 握手可能占掉头 1~2 秒），再取消，才能验证"下到一半取消"
-    deadline = time.time() + 30
+    # 等真正开始下载（并发下载会先把文件预分配，所以不能用"文件大小"判断进度，
+    # 改看进度回调次数）
+    deadline = time.time() + 40
     while time.time() < deadline:
-        if os.path.exists(dest) and os.path.getsize(dest) > 0:
+        if progress_count[0] >= 3:       # 至少有几次进度更新说明已经在下了
             break
         if result.get("outcome"):
             break
         time.sleep(0.2)
-    size_before = os.path.getsize(dest) if os.path.exists(dest) else 0
     cancel.set()
-    thread.join(timeout=15)
+    thread.join(timeout=20)
 
     check("取消后立即停止", result.get("outcome") == "已取消", result.get("outcome", ""))
-    check("取消前已写入部分数据（可用于断点续传）", size_before > 0, f"{size_before/1024:.0f} KB")
+    check("取消前确实在下（收到过进度回调）", progress_count[0] > 0, f"{progress_count[0]} 次")
+    check("取消后不残留半成品文件（并发下载不做区间续传）", not os.path.exists(dest),
+          f"文件{'仍存在' if os.path.exists(dest) else '已清理'}")
 
-    # 续传：不取消地再下一次，应该从断点继续并最终完成
-    print("  （验证断点续传：重新下载应接着上次的进度）")
+    # 重新下载：应该能完整拿到文件
+    print("  （验证重新下载能完整完成）")
     done = {}
 
     def continue_worker():
         try:
-            models._open_with_progress(url, dest, lambda *a: None, "续传测试", cancel_event=None)
-            done["size"] = os.path.getsize(dest)
+            got = models._open_with_progress(url, dest, lambda *a: None, "重下测试", cancel_event=None)
+            done["size"] = got
         except Exception as exc:  # noqa: BLE001
             done["error"] = str(exc)
 
     t2 = threading.Thread(target=continue_worker, daemon=True)
     t2.start()
-    t2.join(timeout=180)
+    t2.join(timeout=300)
     expected = models.PACKAGES["zh_en"]["size"]
-    check("断点续传后文件完整", done.get("size", 0) >= expected * 0.98,
+    check("重新下载后文件完整", done.get("size", 0) >= expected * 0.98,
           f"{done.get('size', 0)/1024/1024:.1f} MB / 期望 {expected/1024/1024:.1f} MB")
 
     if os.path.exists(dest):
