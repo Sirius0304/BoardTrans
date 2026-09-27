@@ -10,5 +10,5 @@ if exist ".venv\Scripts\python.exe" (
 )
 
 echo.
-echo 程序已退出。
+echo 程序已退出.
 pause

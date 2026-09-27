@@ -23,7 +23,11 @@ models/
 build/
 build_selftest/
 dist/
+dist_new/
 *.spec
+# 但打包配置是手写的构建参数（精简优化就在这里），必须入库
+!瞬译_精简.spec
+!自检_精简.spec
 
 # ---- 运行时产物（真正的运行数据在 %LOCALAPPDATA%\ShunYi，不在项目里）----
 *.log

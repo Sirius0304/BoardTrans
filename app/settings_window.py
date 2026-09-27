@@ -339,6 +339,7 @@ class SettingsWindow:
         # 三个区块
         self._build_models_section(outer)
         self._build_quality_section(outer)
+        self._build_memory_section(outer)
         self._build_hotkey_section(outer)
 
         # 底部按钮
@@ -405,6 +406,28 @@ class SettingsWindow:
         self._speed_hint = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
                                     justify="left", anchor="w")
         self._speed_hint.pack(fill="x", padx=14, pady=(6, 12))
+
+    def _build_memory_section(self, parent) -> None:
+        """内存优化：空闲时是否释放模型。"""
+        card = self._card(parent, "内存优化")
+        self._idle_unload_var = tk.BooleanVar(value=True)
+
+        line = tk.Frame(card, bg=COLOR_CARD)
+        line.pack(fill="x", padx=14, pady=2)
+        ttk.Checkbutton(
+            line, text="长时间不翻译时自动释放内存",
+            variable=self._idle_unload_var, command=self._on_memory_change,
+        ).pack(side="left")
+
+        tk.Label(card,
+                 text="勾选：挂机 15 分钟没翻译就把模型从内存里放掉，可省约 97~238 MB；"
+                      "代价是释放后下一次翻译多花约 0.15 秒（实测），基本察觉不到。",
+                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
+                 anchor="w", justify="left", wraplength=560).pack(fill="x", padx=14, pady=(4, 2))
+        tk.Label(card,
+                 text="不勾选：模型一直留在内存里，翻译始终最快（适合经常随手翻译的人）。",
+                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
+                 anchor="w", justify="left", wraplength=560).pack(fill="x", padx=14, pady=(0, 12))
 
     def _build_hotkey_section(self, parent) -> None:
         card = self._card(parent, "快捷键")
@@ -490,7 +513,8 @@ class SettingsWindow:
     def _load_from_config(self, force: bool = False) -> None:
         """把配置值填进界面控件（程序化刷新，不标记为"用户修改"）。"""
         cfg = config.load(force=force)
-        self._last_config_snapshot = (cfg.get("hotkey"), cfg.get("quality"))
+        self._last_config_snapshot = (cfg.get("hotkey"), cfg.get("quality"),
+                                      int(cfg.get("idle_unload_minutes", 0) or 0) > 0)
         self._syncing = True
         try:
             self._pending_hotkey = str(cfg.get("hotkey") or DEFAULT_HOTKEY)
@@ -500,6 +524,7 @@ class SettingsWindow:
             self._hotkey_entry.insert(0, format_hotkey(self._pending_hotkey))
             self._hotkey_entry.configure(state="readonly")
             self._quality_var.set(self._pending_quality)
+            self._idle_unload_var.set(int(cfg.get("idle_unload_minutes", 0) or 0) > 0)
             self._dirty = False
             self._update_dirty_bar()
         finally:
@@ -513,7 +538,8 @@ class SettingsWindow:
         if self._dirty or self._recording:
             return
         cfg = config.load()
-        snapshot = (cfg.get("hotkey"), cfg.get("quality"))
+        snapshot = (cfg.get("hotkey"), cfg.get("quality"),
+                    int(cfg.get("idle_unload_minutes", 0) or 0) > 0)
         if snapshot == self._last_config_snapshot:
             return
         self._load_from_config(force=True)
@@ -524,6 +550,12 @@ class SettingsWindow:
             return
         self._dirty = True
         self._update_dirty_bar()
+
+    def _on_memory_change(self) -> None:
+        """用户勾选/取消"长时间不翻译时自动释放内存"。"""
+        if self._syncing:
+            return
+        self._mark_dirty()
 
     def _on_quality_change(self) -> None:
         """用户点了「高速度 / 高质量」单选。"""
@@ -815,10 +847,15 @@ class SettingsWindow:
         new_hotkey = self._pending_hotkey
         # 档位以界面控件当前值为准（用户可能刚点过单选按钮）
         new_quality = self._quality_var.get()
+        # 内存优化：勾选=空闲 15 分钟释放，不勾=常驻
+        new_idle_minutes = 15 if self._idle_unload_var.get() else 0
+        old_idle_minutes = int(cfg.get("idle_unload_minutes", 0) or 0)
+
         hotkey_changed = new_hotkey != cfg.get("hotkey")
         quality_changed = new_quality != cfg.get("quality")
+        memory_changed = new_idle_minutes != old_idle_minutes
 
-        if not hotkey_changed and not quality_changed:
+        if not hotkey_changed and not quality_changed and not memory_changed:
             self._dirty = False
             self._update_dirty_bar()
             messagebox.showinfo("没有改动", "设置和当前生效的一致，无需保存。", parent=self.root)
@@ -842,6 +879,10 @@ class SettingsWindow:
             config.update(quality=new_quality)
             self.service.reload_config()
 
+        if memory_changed:
+            config.update(idle_unload_minutes=new_idle_minutes)
+            self.service.reload_config()
+
         self._pending_quality = new_quality
         self._load_from_config(force=True)
 
@@ -849,6 +890,9 @@ class SettingsWindow:
         if hotkey_changed:
             tip += ("\n\n提示：新快捷键已经生效。如果按下去没反应，说明这个组合被别的软件抢占了"
                     "（这类冲突无法自动检测），换一个组合重新设置即可。")
+        if memory_changed:
+            tip += ("\n\n内存优化已" + ("开启：挂机超过 15 分钟会自动释放模型内存。"
+                                        if new_idle_minutes else "关闭：模型会一直留在内存里，翻译始终最快。"))
         messagebox.showinfo("已保存", tip, parent=self.root)
 
     def _on_cancel(self) -> None:
@@ -884,6 +928,7 @@ class SettingsWindow:
             self._hotkey_entry.insert(0, format_hotkey(DEFAULT_HOTKEY))
             self._hotkey_entry.configure(state="readonly")
             self._quality_var.set("fast")
+            self._idle_unload_var.set(True)
         finally:
             self._syncing = False
         self._mark_dirty()

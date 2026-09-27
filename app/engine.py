@@ -268,6 +268,11 @@ class TranslationEngine:
         import gc
         gc.collect()
 
+    def loaded_keys(self) -> list[str]:
+        """当前已加载进内存的模型 key（供空闲释放判断用）。"""
+        with self._lock:
+            return list(self._models.keys())
+
     # ---------- 翻译 ----------
 
     def translate(self, text: str, target_lang: str = "en", quality: str = "fast") -> str:

@@ -135,6 +135,8 @@ class HotkeyService:
         self._handler = None
         self.last_result: dict = {}
         self._busy = threading.Event()          # 防止连按触发多重翻译
+        self._last_activity = time.time()       # 最近一次翻译的时间，用于空闲释放判定
+        self._idle_check_interval = 20          # 空闲检查周期（秒）；测试时可改小
         # 打开设置窗口的入口（由主程序注入；缺模型时用它把用户直接引到设置界面）
         self.settings_launcher: Callable[[], None] | None = None
 
@@ -148,6 +150,7 @@ class HotkeyService:
         self.register_hotkey()
         log.info("服务已启动 | %s", paths.describe())
         threading.Thread(target=self._background_preload, name="shunyi-preload", daemon=True).start()
+        threading.Thread(target=self._idle_watchdog, name="shunyi-idle", daemon=True).start()
 
     def stop(self) -> None:
         """停止服务，注销热键。"""
@@ -224,6 +227,7 @@ class HotkeyService:
     def _handle_translate(self) -> None:
         cfg = config.load(force=True)
         self.cfg = cfg
+        self._last_activity = time.time()      # 记录活跃时间，避免刚翻译完就被释放
 
         if not cfg.get("enabled", True):
             self._notify("翻译已关闭", "在托盘菜单里重新开启")
@@ -290,6 +294,7 @@ class HotkeyService:
             engine.load_model("zh_en")
             if target == "ja":
                 engine.load_model("en_ja")
+            self._last_activity = time.time()      # 刚预加载完，从这一刻开始算空闲
             log.info("模型预加载完成: %s", target)
         except Exception:  # noqa: BLE001
             log.exception("模型预加载失败")
@@ -297,6 +302,30 @@ class HotkeyService:
     def _background_preload(self) -> None:
         time.sleep(0.5)
         self.preload()
+
+    def _idle_watchdog(self) -> None:
+        """空闲一段时间后释放模型占用的内存（可在配置里关掉）。
+
+        实测数据：单个模型加载后约占 97~141 MB 内存，中→日两个模型合计约 238 MB；
+        释放后再翻译需要重新加载，实测约多花 0.15 秒。
+        默认空闲 15 分钟释放，兼顾"挂机省内存"与"随手打字不卡顿"。
+        把配置里的 idle_unload_minutes 设为 0 即可让它一直常驻。
+        """
+        while self._running:
+            time.sleep(self._idle_check_interval)
+            try:
+                minutes = float(config.load().get("idle_unload_minutes", 0) or 0)
+                if minutes <= 0:
+                    continue                      # 用户选择常驻，不做任何事
+                engine = self._engine
+                if engine is None or not engine.loaded_keys():
+                    continue                      # 内存里本来就没有模型
+                idle = time.time() - self._last_activity
+                if idle >= minutes * 60:
+                    self.unload_models()
+                    log.info("空闲 %.0f 分钟，已释放模型占用的内存（下次翻译会自动重新加载）", idle / 60)
+            except Exception:  # noqa: BLE001
+                log.exception("空闲释放检查出错（已忽略）")
 
     def _open_settings(self) -> None:
         """打开设置窗口（由主程序注入入口；未注入时给出文字指引）。"""

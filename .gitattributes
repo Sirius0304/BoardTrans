@@ -4,6 +4,7 @@
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
 *.py text eol=lf
+*.spec text eol=lf
 *.md text eol=lf
 *.txt text eol=lf
 *.json text eol=lf

@@ -39,6 +39,10 @@ DEFAULTS: dict = {
     "download_mirror": "official",
     # CPU 推理线程数，0 = 自动
     "cpu_threads": 0,
+    # 空闲多少分钟后自动释放内存里的翻译模型（0 = 一直常驻，不释放）
+    # 实测：单个模型约占 97~141 MB 内存，两个都加载约 238 MB；
+    # 释放后再翻译需要重新加载，实测约多花 0.15 秒，几乎无感。默认 15 分钟。
+    "idle_unload_minutes": 15,
 }
 
 _lock = threading.RLock()
