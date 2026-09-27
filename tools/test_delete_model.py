@@ -145,9 +145,11 @@ def main():
     print("\n  === 5. 确认真实模型未受影响 ===")
     check("中译英模型仍在", models.is_installed("zh_en"))
     check("中译日模型仍在", models.is_installed("en_ja"))
-    check("项目里的模型备份仍在（未被误删）",
-          os.path.exists(os.path.join(paths.program_dir(), "models",
-                                      "translate-zh_en-1_9.argosmodel")),
+    # 离线部署用的模型备份已移到外部备份目录（避免被当成"副本"清理），这里确认它安然无恙
+    backup_dir = r"F:\瞬译_备份_20260927\离线部署用模型包"
+    has_backup = (os.path.isdir(backup_dir)
+                  and any(f.lower().endswith(".argosmodel") for f in os.listdir(backup_dir)))
+    check("离线部署用的模型备份仍在（未被误删）", has_backup,
           "只删与目标 key 匹配的文件，不碰其它")
 
     passed = sum(1 for _n, ok, _d in RESULTS if ok)

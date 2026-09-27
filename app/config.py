@@ -43,6 +43,12 @@ DEFAULTS: dict = {
     # 实测：单个模型约占 97~141 MB 内存，两个都加载约 238 MB；
     # 释放后再翻译需要重新加载，实测约多花 0.15 秒，几乎无感。默认 15 分钟。
     "idle_unload_minutes": 15,
+    # 模型存放位置。留空 = 自动（优先用「软件所在目录\models」，不可用时回退到数据目录）。
+    # 也可填绝对路径自定义，例如 "D:\\ShunYiModels"。
+    # 注意：路径不能含中文 —— sentencepiece 打不开非 ASCII 路径，填了会被自动忽略并回退。
+    "models_root": "",
+    # 模型下载完成后是否弹出提醒窗口（默认关，改用托盘气泡提示，不打断操作）
+    "notify_download_done": False,
 }
 
 _lock = threading.RLock()

@@ -546,6 +546,46 @@ def describe_locations(key: str) -> list[tuple[str, int]]:
     return items
 
 
+def migrate_legacy_models() -> list[str]:
+    """把旧位置（数据目录下）的模型搬到新的模型根目录，避免用户白白重新下载。
+
+    背景：模型默认位置从「%LOCALAPPDATA%\\ShunYi」改成了「软件目录\\models」。
+    老用户升级后模型还在旧地方，直接改路径会让他们以为模型丢了、重新下 186 MB。
+    这里做一次性搬迁，只在"新位置还没有内容"时才搬，不会覆盖任何东西。
+
+    返回搬迁记录（空列表表示无需迁移或已经迁过）。
+    """
+    new_root = os.path.abspath(paths.models_root())
+    old_root = os.path.abspath(paths.data_dir())
+    # 注意：即使模型根目录没变，子目录名也可能变了（packages_cache → cache），
+    # 所以这里不做提前返回，交给下面的逐项比较去判断
+    _ = new_root
+
+    pairs = [
+        (os.path.join(old_root, "packages"), os.path.abspath(paths.packages_dir())),
+        (os.path.join(old_root, "packages_cache"), os.path.abspath(paths.models_dir())),
+    ]
+    done: list[str] = []
+    for old, new in pairs:
+        if not os.path.isdir(old) or os.path.abspath(old) == new:
+            continue
+        try:
+            if os.path.isdir(new) and os.listdir(new):
+                continue               # 新位置已有内容，绝不动它
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            if os.path.exists(new):
+                try:
+                    os.rmdir(new)      # 目标是空目录，删掉以便直接改名
+                except OSError:
+                    pass
+            shutil.move(old, new)
+            done.append(f"{os.path.basename(old)} → {new}")
+            log.info("模型已从旧位置迁移：%s → %s", old, new)
+        except Exception:  # noqa: BLE001
+            log.exception("迁移模型失败（跳过这一项，不影响继续使用）：%s", old)
+    return done
+
+
 def remove(key: str, include_extra: bool = True) -> dict:
     """删除模型：解压目录 + 下载缓存 + 程序管理范围之外的同名副本。
 

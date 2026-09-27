@@ -145,12 +145,27 @@ class HotkeyService:
     def start(self) -> None:
         """启动工作线程并注册全局热键。"""
         self._running = True
+        # 模型默认位置改成「软件目录\models」后，把旧位置的模型搬过来，
+        # 否则老用户会以为模型丢了、白重新下载一遍
+        try:
+            moved = models.migrate_legacy_models()
+            if moved:
+                log.info("模型位置迁移完成: %s", "；".join(moved))
+                self._notify("模型位置已更新",
+                             "原有模型已搬到新位置，无需重新下载。" + moved[0])
+        except Exception:  # noqa: BLE001
+            log.exception("迁移模型位置出错（已忽略，不影响使用）")
+
         self._worker = threading.Thread(target=self._worker_loop, name="shunyi-worker", daemon=True)
         self._worker.start()
         self.register_hotkey()
         log.info("服务已启动 | %s", paths.describe())
         threading.Thread(target=self._background_preload, name="shunyi-preload", daemon=True).start()
         threading.Thread(target=self._idle_watchdog, name="shunyi-idle", daemon=True).start()
+
+    def notify(self, title: str, message: str) -> None:
+        """对外暴露的通知接口（供设置窗口使用；托盘会把气泡接管过去）。"""
+        self._notify(title, message)
 
     def stop(self) -> None:
         """停止服务，注销热键。"""
