@@ -122,7 +122,7 @@ def test_remove_logic():
         with open(fake_archive, "wb") as f:
             f.write(b"y" * (1 * 1024 * 1024))
 
-        freed = models.remove(fake_key)
+        freed = models.remove(fake_key)["freed"]
         check("删除返回释放的字节数", freed >= 3 * 1024 * 1024, f"{freed/1024/1024:.1f} MB")
         check("解压目录已删除", not os.path.isdir(fake_dir))
         check("下载缓存已删除", not os.path.exists(fake_archive))

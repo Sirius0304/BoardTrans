@@ -475,16 +475,96 @@ def ensure(key: str, progress_cb=None, cancel_event=None) -> str:
         return install(key, progress_cb=progress_cb)
 
 
-def remove(key: str) -> int:
-    """删除某个模型的解压目录与下载缓存，返回释放的字节数。
+def _looks_like_model_package(filename: str, key: str) -> bool:
+    """判断某个文件名是不是该模型的包（严格匹配，避免误删无关文件）。
 
-    抛出 PermissionError 表示文件正被占用（调用方需要给用户可读提示）。
+    能匹配两种命名：
+      - zh_en.argosmodel                      （程序自己下载时用的名字）
+      - translate-zh_en-1_9.argosmodel        （Argos 官方发行包的名字）
+    """
+    low = filename.lower()
+    if not low.endswith(".argosmodel"):
+        return False
+    return low == f"{key}.argosmodel" or low.startswith(f"translate-{key}-")
+
+
+def find_extra_copies(key: str) -> list[str]:
+    """找出**程序管理范围之外**的同一个模型包（例如随程序一起放的离线备份）。
+
+    背景：模型文件可能散落在多处——程序自己管理的 packages_cache 之外，
+    项目/程序目录里也可能有人手工放了一份同名的 .argosmodel。
+    设置里删除模型时如果不管这些副本，用户会看到"删了但文件还在"。
+
+    只在几个明确的目录里查找（程序目录、其 models 子目录、数据目录、其 models 子目录），
+    且文件名必须严格匹配模型命名规则，避免误删无关文件。
+    """
+    roots = [
+        paths.program_dir(),
+        os.path.join(paths.program_dir(), "models"),
+        paths.data_dir(),
+        os.path.join(paths.data_dir(), "models"),
+    ]
+    managed = os.path.abspath(paths.models_dir())     # 程序管理的目录由 remove 单独处理
+    found: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not os.path.isdir(root) or os.path.abspath(root) == managed:
+            continue
+        try:
+            names = os.listdir(root)
+        except OSError:
+            continue
+        for name in names:
+            if not _looks_like_model_package(name, key):
+                continue
+            full = os.path.abspath(os.path.join(root, name))
+            if full in seen or full == managed:
+                continue
+            if os.path.isfile(full):
+                seen.add(full)
+                found.append(os.path.join(root, name))
+    return found
+
+
+def describe_locations(key: str) -> list[tuple[str, int]]:
+    """列出该模型当前在磁盘上的所有位置及占用（供界面在删除前展示给用户）。"""
+    items: list[tuple[str, int]] = []
+    target = model_dir(key)
+    if os.path.isdir(target):
+        items.append((target, installed_size(key)))
+    archive = os.path.join(paths.models_dir(), f"{key}.argosmodel")
+    if os.path.exists(archive):
+        try:
+            items.append((archive, os.path.getsize(archive)))
+        except OSError:
+            items.append((archive, 0))
+    for extra in find_extra_copies(key):
+        try:
+            items.append((extra, os.path.getsize(extra)))
+        except OSError:
+            items.append((extra, 0))
+    return items
+
+
+def remove(key: str, include_extra: bool = True) -> dict:
+    """删除模型：解压目录 + 下载缓存 + 程序管理范围之外的同名副本。
+
+    返回 {"freed": 释放字节数, "removed": [已删路径], "failed": [(路径, 原因)]}
+
+    关键点：
+      - 解压目录删除失败（文件被占用）会抛出 PermissionError，由调用方提示用户；
+      - 范围外的副本单独 try，个别删不掉不影响其余部分，会记在 failed 里如实反馈。
     """
     freed = 0
+    removed: list[str] = []
+    failed: list[tuple[str, str]] = []
+
     target = model_dir(key)
     if os.path.isdir(target):
         freed += installed_size(key)
-        shutil.rmtree(target)
+        shutil.rmtree(target)              # 失败会抛异常，交给调用方处理
+        removed.append(target)
+
     archive = os.path.join(paths.models_dir(), f"{key}.argosmodel")
     if os.path.exists(archive):
         try:
@@ -492,7 +572,37 @@ def remove(key: str) -> int:
         except OSError:
             pass
         os.remove(archive)
-    return freed
+        removed.append(archive)
+
+    if include_extra:
+        for extra in find_extra_copies(key):
+            try:
+                size = os.path.getsize(extra)
+                os.remove(extra)
+                freed += size
+                removed.append(extra)
+            except OSError as exc:
+                failed.append((extra, str(exc)))
+
+    return {"freed": freed, "removed": removed, "failed": failed}
+
+
+def leftover_files(key: str, deep: bool = True) -> list[str]:
+    """删除后再检查一遍：还有哪些属于该模型的文件没被清掉。
+
+    deep=False 时只查程序自己管理的两处（很快，供界面高频刷新时用）；
+    deep=True 时连"程序目录里的额外副本"一起查（供删除后核实用）。
+    """
+    left: list[str] = []
+    target = model_dir(key)
+    if os.path.exists(target):
+        left.append(target)
+    archive = os.path.join(paths.models_dir(), f"{key}.argosmodel")
+    if os.path.exists(archive):
+        left.append(archive)
+    if deep:
+        left.extend(find_extra_copies(key))
+    return left
 
 
 def ensure_for_target(target_lang: str, progress_cb=None) -> list[str]:

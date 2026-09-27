@@ -678,7 +678,21 @@ class SettingsWindow:
             # 正在下载（或等待依赖）的卡片不要被刷新覆盖掉进度
             if key in self._active_downloads or state.get("status") == "downloading":
                 continue
+
+            # 上次删除没删干净：如实显示，并给出"重试删除"，不要伪装成"未下载"
+            if state.get("status") == "stale":
+                reason = state.get("error") or "部分文件仍被占用"
+                ui["status"].configure(text=f"状态：删除未完成（{reason}）", fg=COLOR_WARN_FG)
+                ui["action"].configure(text="重试删除",
+                                       command=lambda k=key: self._on_delete_model(k))
+                ui["action"].state(["!disabled"])
+                ui["progress"].pack_forget()
+                continue
+
             installed = models.is_installed(key)
+            # 只查程序管理的两处（deep=False），避免高频刷新时去扫目录
+            leftover = [] if installed else models.leftover_files(key, deep=False)
+
             if key == "en_ja" and installed and not models.is_installed("zh_en"):
                 # 日文方向还需要基础模型
                 ui["status"].configure(text="已下载日文模型，但缺少「中译英」基础模型，暂时无法翻译",
@@ -686,10 +700,17 @@ class SettingsWindow:
             elif installed:
                 size_mb = models.installed_size(key) / 1024 / 1024
                 ui["status"].configure(text=f"状态：已下载（占用 {size_mb:.0f} MB）", fg=COLOR_OK)
+            elif leftover:
+                # 文件还在但模型已不完整 —— 说明删除只完成了一半
+                ui["status"].configure(
+                    text=f"状态：有 {len(leftover)} 处文件残留未清理，点右侧可重试删除",
+                    fg=COLOR_WARN_FG)
             else:
                 ui["status"].configure(text="状态：未下载", fg=COLOR_SUBTEXT)
-            ui["action"].configure(text="删除" if installed else "下载",
-                                   command=(lambda k=key: self._on_delete_model(k)) if installed
+
+            can_delete = installed or bool(leftover)
+            ui["action"].configure(text="删除" if can_delete else "下载",
+                                   command=(lambda k=key: self._on_delete_model(k)) if can_delete
                                    else (lambda k=key: self._on_download_model(k)))
             ui["action"].state(["!disabled"])
             ui["progress"].pack_forget()
@@ -838,14 +859,23 @@ class SettingsWindow:
 
     def _on_delete_model(self, key: str) -> None:
         info = next(i for i in MODEL_CARDS if i["key"] == key)
-        size_mb = models.installed_size(key) / 1024 / 1024
         cfg = config.load()
         used = (key == "zh_en" and cfg.get("target_lang") in ("en", "ja")) or \
                (key == "en_ja" and cfg.get("target_lang") == "ja")
 
+        # 删除前把"会被清理哪些位置"完整列出来 —— 模型可能不止一处，
+        # 只删程序管理的那部分会让用户觉得"删了但文件还在"
+        locations = models.describe_locations(key)
+        total_mb = sum(sz for _p, sz in locations) / 1024 / 1024
+
         lines = [f"确定要删除「{info['title']}」模型吗？", "",
-                 f"将释放约 {size_mb:.0f} MB 磁盘空间。"]
+                 f"将释放约 {total_mb:.0f} MB 磁盘空间。", ""]
+        if locations:
+            lines.append("会清理以下位置：")
+            for path, size in locations:
+                lines.append(f"  · {path}（{size/1024/1024:.0f} MB）")
         if key == "zh_en":
+            lines.append("")
             lines.append("注意：中译英是基础模型，删除后中译英和中译日都无法翻译。")
         if used:
             lines.append("当前目标语言正在使用它，删除后按快捷键会提示模型缺失。")
@@ -862,29 +892,55 @@ class SettingsWindow:
             except Exception:  # noqa: BLE001
                 log.exception("卸载模型失败（继续尝试删除）")
 
-            removed = models.remove(key)
+            result = models.remove(key)
+            freed = result["freed"]
+            removed_count = len(result["removed"])
+            failed = result["failed"]
 
-            # 日文方向的可用性依赖基础模型，删除后给出明确提示，避免"静默失效"
-            missing = models.missing_for_target(cfg.get("target_lang", "en"))
-            if missing:
-                names = "、".join(next(i["title"] for i in MODEL_CARDS if i["key"] == m) for m in missing)
+            # 删除后再实地核实一遍，避免"界面显示删了、磁盘上还在"
+            leftover = models.leftover_files(key)
+
+            if leftover or failed:
+                detail = [f"  · {p}" for p in leftover]
+                detail += [f"  · {p}（{why}）" for p, why in failed]
+                self._model_status[key] = {"status": "stale", "percent": 0,
+                                           "error": "部分文件仍被占用"}
                 messagebox.showwarning(
-                    "已删除，但有影响",
-                    f"删除完成，释放了 {removed/1024/1024:.0f} MB。\n\n"
-                    f"当前目标语言所需的「{names}」模型已缺失，"
-                    "现在按快捷键会提示模型未就绪，请重新下载后再使用。",
+                    "删除未完成",
+                    f"已清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB。\n\n"
+                    "但以下文件没能删掉：\n" + "\n".join(detail[:8]) +
+                    "\n\n常见原因是文件正被占用。可以退出软件后手动删除，"
+                    "或在设置里再点一次「重试删除」。",
                     parent=self.root)
             else:
-                messagebox.showinfo("删除完成", f"已删除，释放了 {removed/1024/1024:.0f} MB 磁盘空间。",
-                                    parent=self.root)
+                self._model_status.pop(key, None)
+                missing = models.missing_for_target(cfg.get("target_lang", "en"))
+                if missing:
+                    names = "、".join(next(i["title"] for i in MODEL_CARDS if i["key"] == m)
+                                      for m in missing)
+                    messagebox.showwarning(
+                        "已删除，但有影响",
+                        f"删除完成：共清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB。\n\n"
+                        f"当前目标语言所需的「{names}」模型已缺失，"
+                        "现在按快捷键会提示模型未就绪，请重新下载后再使用。",
+                        parent=self.root)
+                else:
+                    messagebox.showinfo(
+                        "删除完成",
+                        f"删除完成：共清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB 磁盘空间。",
+                        parent=self.root)
         except PermissionError:
+            self._model_status[key] = {"status": "stale", "percent": 0, "error": "文件被占用"}
             messagebox.showerror(
                 "无法删除",
                 "模型文件正在被占用，删除没有执行。\n\n"
-                "请先把目标语言切到另一个方向，或退出软件后手动删除该文件夹。",
+                "请先把目标语言切到另一个方向，或退出软件后手动删除该文件夹，"
+                "然后再回到设置里点一次「重试删除」。",
                 parent=self.root)
         except Exception as exc:  # noqa: BLE001
             log.exception("删除模型失败")
+            self._model_status[key] = {"status": "stale", "percent": 0,
+                                       "error": self._friendly_error(exc)[:20]}
             messagebox.showerror("删除失败", self._friendly_error(exc), parent=self.root)
         finally:
             self._refresh_models()
