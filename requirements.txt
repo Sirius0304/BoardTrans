@@ -1,0 +1,28 @@
+# 瞬译 依赖清单
+# 推荐安装命令（阿里云镜像，国内最快）：
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+#
+# 注意：实测**清华镜像(tuna) 缺少 ctranslate2**，如果你平时 pip 默认配的是清华源，
+# 一定要显式加上 -i 参数换源，否则会报 "Could not find a version that satisfies the requirement ctranslate2"。
+#   阿里云（推荐）  -i https://mirrors.aliyun.com/pypi/simple/
+#   腾讯云          -i https://mirrors.cloud.tencent.com/pypi/simple/
+#   官方源          -i https://pypi.org/simple
+#
+# 版本已锁定，避免以后自动装到不兼容的新版本。
+
+# 翻译引擎（CPU 推理）与分词器 —— 核心，必须
+ctranslate2==4.8.2
+sentencepiece==0.2.2
+
+# 全局键盘钩子 —— 核心，必须
+keyboard==0.13.5
+
+# 剪贴板读写 —— 核心，必须
+pyperclip==1.11.0
+
+# 系统托盘界面（阶段二及以后需要）
+pystray==0.19.5
+Pillow==12.3.0
+
+# 打包成 exe（阶段三需要）
+pyinstaller==6.22.3

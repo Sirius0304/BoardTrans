@@ -1,0 +1,10 @@
+# 统一换行符：Windows 批处理必须是 CRLF（否则 ^ 续行会失效），源码和文档用 LF
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.ico binary

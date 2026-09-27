@@ -1,0 +1,42 @@
+# ============================================================
+#  瞬译 项目 .gitignore
+#  目的：只把"源码 + 文档 + 脚本"入库，把几百 MB 的环境/模型/产物排除在外
+# ============================================================
+
+# ---- Python 虚拟环境（约 156 MB，用 0-准备环境.bat 可随时重建）----
+.venv/
+.venv_old_nogui/
+venv/
+env/
+
+# ---- Python 缓存 ----
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# ---- 翻译模型（单个 70~120 MB，程序首次运行会自动下载）----
+# 整个 models/ 目录都不入库：里面是本地备用的模型包与解压产物
+models/
+
+# ---- PyInstaller 打包产物（用 3-打包exe.bat 可随时重建）----
+build/
+build_selftest/
+dist/
+*.spec
+
+# ---- 运行时产物（真正的运行数据在 %LOCALAPPDATA%\ShunYi，不在项目里）----
+*.log
+*.tmp
+*.bak
+*.broken-*
+
+# ---- 工作区工具数据 ----
+.workbuddy/
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
