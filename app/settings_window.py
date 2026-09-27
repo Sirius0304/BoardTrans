@@ -187,6 +187,8 @@ class SettingsWindow:
         self._model_ui: dict[str, dict] = {}
         self._download_threads: dict[str, threading.Thread] = {}
         self._cancel_events: dict[str, threading.Event] = {}
+        # 正在下载的模型 key 集合（含"作为依赖被带上下载"的），用于防止重复发起
+        self._active_downloads: set[str] = set()
         self._model_status: dict[str, dict] = {}
         self._last_config_snapshot: tuple | None = None
         self._section_wrappers: list = []        # 各区块容器，用于定位提示条的插入位置
@@ -473,6 +475,8 @@ class SettingsWindow:
                     return
                 elif cmd == "progress":
                     self._on_download_progress(*payload)
+                elif cmd == "dep_start":
+                    self._on_dep_start(*payload)
                 elif cmd == "download_done":
                     self._on_download_done(*payload)
                 elif cmd == "call":
@@ -671,8 +675,9 @@ class SettingsWindow:
             key = info["key"]
             ui = self._model_ui[key]
             state = self._model_status.get(key, {})
-            if state.get("status") == "downloading":
-                continue          # 下载中不要被刷新覆盖
+            # 正在下载（或等待依赖）的卡片不要被刷新覆盖掉进度
+            if key in self._active_downloads or state.get("status") == "downloading":
+                continue
             installed = models.is_installed(key)
             if key == "en_ja" and installed and not models.is_installed("zh_en"):
                 # 日文方向还需要基础模型
@@ -690,11 +695,39 @@ class SettingsWindow:
             ui["progress"].pack_forget()
 
     def _on_download_model(self, key: str) -> None:
+        # 本次要下载哪些模型：中译日还需要中译英作为基础模型。
+        # 关键点：判断"基础模型是否就绪"不能只看 is_installed ——
+        # 正在下载/正在安装的模型 is_installed 同样是 False，会导致重复下载同一个文件
+        # （曾因此出现进度条来回跳、两个线程交错写坏文件的问题）。
+        # 这里同时看三处：已安装、底层锁被占用、界面层登记，任何一处成立都算"在准备中"。
+        zh_busy = ("zh_en" in self._active_downloads) or models.is_downloading("zh_en")
+        base_ready = models.is_installed("zh_en") or zh_busy
+        need_base = (key == "en_ja" and not base_ready)
+        targets = ["zh_en", "en_ja"] if need_base else [key]
+
+        # 互斥：只要清单里有任何一项正在下载，就不重复发起
+        busy = [k for k in targets if k in self._active_downloads or models.is_downloading(k)]
+        if busy:
+            names = "、".join(self._title_of(k) for k in busy)
+            if busy == ["zh_en"] and key == "en_ja":
+                messagebox.showinfo(
+                    "基础模型正在下载",
+                    "「中译英」基础模型正在下载中。\n\n"
+                    "等它下载完成后，再点「中译日」的下载按钮即可 —— 那时只会下载日文模型，"
+                    "不会再重复下载一遍基础模型。",
+                    parent=self.root)
+            else:
+                messagebox.showinfo(
+                    "正在下载中",
+                    f"「{names}」正在下载，请等它完成后再试。",
+                    parent=self.root)
+            return
+
         if self._download_threads.get(key) and self._download_threads[key].is_alive():
             return
+
         info = next(i for i in MODEL_CARDS if i["key"] == key)
         size_text = info["size_text"]
-        need_base = (key == "en_ja" and not models.is_installed("zh_en"))
         tip = (f"即将下载：{info['title']}（{size_text}）。\n\n"
                "这是本软件唯一需要联网的操作，翻译过程本身完全离线。\n"
                "下载可以随时点「取消」，已经下载的部分下次会接着下。")
@@ -705,6 +738,7 @@ class SettingsWindow:
 
         cancel = threading.Event()
         self._cancel_events[key] = cancel
+        self._active_downloads.update(targets)      # 登记占用，避免其他入口重复发起
         self._model_status[key] = {"status": "downloading", "percent": 0, "error": ""}
         ui = self._model_ui[key]
         ui["status"].configure(text="状态：正在下载 0%", fg=COLOR_PRIMARY)
@@ -714,10 +748,12 @@ class SettingsWindow:
 
         def worker():
             try:
-                keys = ["zh_en", "en_ja"] if need_base else [key]
-                for k in keys:
+                for k in targets:
                     if cancel.is_set():
                         raise models.DownloadCancelled()
+                    if k != key:
+                        # 正在下载依赖项（基础模型），让主卡片显示"准备中"而不是干等 0%
+                        self._queue.put(("dep_start", (key, k)))
                     self._download_one(k, cancel)
                 self._queue.put(("download_done", (key, True, "")))
             except models.DownloadCancelled:
@@ -725,10 +761,31 @@ class SettingsWindow:
             except Exception as exc:  # noqa: BLE001
                 log.exception("模型下载失败")
                 self._queue.put(("download_done", (key, False, self._friendly_error(exc))))
+            finally:
+                # 无论成功、取消还是失败，都要释放占用登记
+                for k in targets:
+                    self._active_downloads.discard(k)
 
         thread = threading.Thread(target=worker, name=f"shunyi-dl-{key}", daemon=True)
         self._download_threads[key] = thread
         thread.start()
+
+    @staticmethod
+    def _title_of(key: str) -> str:
+        for item in MODEL_CARDS:
+            if item["key"] == key:
+                return item["title"]
+        return key
+
+    def _on_dep_start(self, key: str, dep_key: str) -> None:
+        """主卡片正在等待它的依赖模型下载完成。"""
+        ui = self._model_ui.get(key)
+        if not ui:
+            return
+        dep_title = self._title_of(dep_key)
+        ui["status"].configure(
+            text=f"状态：正在等待基础模型「{dep_title}」下载完成（进度见它的卡片）…",
+            fg=COLOR_PRIMARY)
 
     def _download_one(self, key: str, cancel: threading.Event) -> None:
         def progress(label, done, total):
@@ -743,14 +800,23 @@ class SettingsWindow:
         if not ui["progress"].winfo_manager():
             ui["progress"].pack(fill="x", padx=14, pady=(0, 8))
         percent = int(done * 100 / total) if total else 0
+        # total 可能为 None（服务器没给 Content-Length），此时只显示已下载量
+        if total:
+            size_text = f"{done/1024/1024:.1f} / {total/1024/1024:.1f} MB"
+        else:
+            size_text = f"已下载 {done/1024/1024:.1f} MB"
         self._model_status[key] = {"status": "downloading", "percent": percent, "error": ""}
-        ui["status"].configure(
-            text=f"状态：正在下载 {percent}%　（{done/1024/1024:.1f} / {total/1024/1024:.1f} MB）",
-            fg=COLOR_PRIMARY)
-        ui["progress"]["value"] = percent
+        ui["status"].configure(text=f"状态：正在下载 {percent}%　（{size_text}）", fg=COLOR_PRIMARY)
+        if total:
+            ui["progress"]["value"] = percent
 
     def _on_download_done(self, key: str, ok: bool, message: str) -> None:
         self._model_status[key] = {"status": "installed" if ok else "absent", "percent": 0, "error": message}
+        self._active_downloads.discard(key)
+        # 先刷新界面、再弹窗：弹窗会阻塞窗口线程，先刷新能保证关掉弹窗后界面立刻是对的
+        self._refresh_models()
+        self._dirty = False
+        self._update_dirty_bar()
         if ok:
             self.service.preload()      # 下载完顺手把模型读进内存，用户点保存后马上能用
             messagebox.showinfo("下载完成", "模型已下载并安装完成，现在可以正常翻译了。", parent=self.root)
@@ -761,10 +827,6 @@ class SettingsWindow:
                     f"{message}\n\n可以点击「下载」重试。\n"
                     f"若反复失败，可手动下载模型包放到：\n{paths.models_dir()}",
                     parent=self.root)
-        self._refresh_models()
-        self._mark_dirty()   # 模型变化也提示需要保存？—— 模型不需要保存，这里只刷新界面
-        self._dirty = False
-        self._update_dirty_bar()
 
     def _cancel_download(self, key: str) -> None:
         event = self._cancel_events.get(key)

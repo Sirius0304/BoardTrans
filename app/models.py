@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -40,6 +41,35 @@ class DownloadCancelled(Exception):
 
 def _is_cancelled(cancel_event) -> bool:
     return bool(cancel_event is not None and cancel_event.is_set())
+
+
+# ---------------------------------------------------------------------------
+# 同一模型的并发下载保护
+# ---------------------------------------------------------------------------
+# 为什么必须有这层：下载是"以追加方式写同一个文件 + 支持断点续传"实现的
+# （open(dest, "ab")）。如果两个线程同时下同一个模型，写入会交错，
+# 文件会损坏且进度会互相覆盖。用 RLock 保证同一模型同一时刻只有一个线程在下载
+# （用 RLock 是因为 ensure() 内部还会调用 download()，同一线程需要可重入）。
+_download_locks: dict = {}
+_download_locks_guard = threading.Lock()
+
+
+def _model_download_lock(key: str):
+    with _download_locks_guard:
+        lock = _download_locks.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _download_locks[key] = lock
+        return lock
+
+
+def is_downloading(key: str) -> bool:
+    """该模型此刻是否正被某个线程下载（界面用它来判断，避免重复发起）。"""
+    lock = _model_download_lock(key)
+    if lock.acquire(blocking=False):     # 能立刻拿到，说明没人在下载
+        lock.release()
+        return False
+    return True
 
 # ------------------------- 模型注册表 -------------------------
 
@@ -157,7 +187,16 @@ def _open_with_progress(url: str, dest: str, progress_cb, label: str, timeout: i
 
 
 def download(key: str, progress_cb=None, retries: int = 3, cancel_event=None) -> str:
-    """下载模型到本地缓存目录。progress_cb(label, downloaded, total)。支持中途取消。"""
+    """下载模型到本地缓存目录。progress_cb(label, downloaded, total)。支持中途取消。
+
+    同一模型的下载是互斥的（见 _model_download_lock 的说明）。
+    """
+    with _model_download_lock(key):
+        return _download_locked(key, progress_cb=progress_cb, retries=retries,
+                                cancel_event=cancel_event)
+
+
+def _download_locked(key: str, progress_cb=None, retries: int = 3, cancel_event=None) -> str:
     info = PACKAGES[key]
     cache = paths.models_dir()
 
@@ -255,11 +294,16 @@ def install(key: str, progress_cb=None) -> str:
 
 
 def ensure(key: str, progress_cb=None, cancel_event=None) -> str:
-    """确保模型可用：已安装直接返回，否则下载 + 安装。支持中途取消。"""
-    if is_installed(key):
-        return model_dir(key)
-    download(key, progress_cb=progress_cb, cancel_event=cancel_event)
-    return install(key, progress_cb=progress_cb)
+    """确保模型可用：已安装直接返回，否则下载 + 安装。支持中途取消。
+
+    整段（判断 -> 下载 -> 安装）都在同一把锁里完成，
+    避免两个线程同时进入后各写一份文件。
+    """
+    with _model_download_lock(key):
+        if is_installed(key):
+            return model_dir(key)
+        download(key, progress_cb=progress_cb, cancel_event=cancel_event)
+        return install(key, progress_cb=progress_cb)
 
 
 def remove(key: str) -> int:
