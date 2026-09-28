@@ -16,7 +16,7 @@ import shutil
 import sys
 import time
 
-PROJECT = r"F:\瞬译"
+PROJECT = r"F:\shunyi"
 BACKUP = r"F:\瞬译_备份_20260927"
 LOCAL = os.path.join(os.environ["LOCALAPPDATA"], "ShunYi")
 

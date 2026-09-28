@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import paths   # noqa: E402
 
 RUN = os.path.join(os.environ["LOCALAPPDATA"], "ShunYi")
-PROJ = r"F:\瞬译"
+PROJ = r"F:\shunyi"
 BACKUP = r"F:\瞬译_备份_20260927"
 
 

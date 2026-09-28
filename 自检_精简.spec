@@ -10,7 +10,7 @@
 
 from PyInstaller.utils.hooks import collect_dynamic_libs
 
-PROJECT = r"F:\瞬译"
+PROJECT = r"F:\shunyi"
 
 binaries = collect_dynamic_libs("ctranslate2")
 binaries += collect_dynamic_libs("sentencepiece")

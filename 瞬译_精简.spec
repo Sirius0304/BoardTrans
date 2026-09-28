@@ -23,7 +23,7 @@
 
 from PyInstaller.utils.hooks import collect_dynamic_libs
 
-PROJECT = r"F:\瞬译"
+PROJECT = r"F:\shunyi"
 
 # 只收 ctranslate2 的原生库（DLL / pyd），不收它的 Python 子模块
 binaries = collect_dynamic_libs("ctranslate2")

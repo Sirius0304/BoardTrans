@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import config                 # noqa: E402
 from app.engine import TranslationEngine   # noqa: E402
 
-PROJECT = r"F:\瞬译"
+PROJECT = r"F:\shunyi"
 BACKUP = r"F:\瞬译_备份_20260927"
 RUN = os.path.join(os.environ["LOCALAPPDATA"], "ShunYi")
 EXE = os.path.join(PROJECT, "dist", "瞬译.exe")

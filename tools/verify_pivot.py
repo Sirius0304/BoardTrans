@@ -9,7 +9,7 @@ import zipfile
 import ctranslate2
 import sentencepiece
 
-ROOT = r"F:\瞬译\models"
+ROOT = r"F:\shunyi\models"
 WORK = os.path.join(os.environ["LOCALAPPDATA"], "ShunYiTest")
 
 PKGS = {

@@ -3,7 +3,7 @@
 关键前提验证：模型放在**含中文的路径**下，引擎还能不能工作？
 
 背景：项目约定里写着"数据目录必须纯 ASCII，sentencepiece 打不开中文路径"。
-用户希望把模型改到"软件所在目录"下，而本机软件目录是 F:\\瞬译（含中文）。
+用户希望把模型改到"软件所在目录"下，而本机软件目录是 F:\shunyi（含中文）。
 如果这条限制仍然存在，直接改路径会导致翻译崩溃 —— 必须先实测。
 """
 import os
@@ -22,8 +22,8 @@ SRC = os.path.join(paths.packages_dir(), "zh_en")   # 现有的中译英模型�
 
 TARGETS = [
     ("纯英文路径", os.path.join(tempfile.gettempdir(), "shunyi_ascii_test")),
-    ("含中文路径", r"F:\瞬译\models\_pathtest"),
-    ("含中文+空格", r"F:\瞬译\测试 目录\_pathtest"),
+    ("含中文路径", r"F:\shunyi\models\_pathtest"),
+    ("含中文+空格", r"F:\shunyi\测试 目录\_pathtest"),
 ]
 
 

@@ -15,7 +15,7 @@
 ```
 22106 INFO: Fixing EXE headers
 22252 INFO: Building EXE from EXE-00.toc completed successfully.
-22255 INFO: Build complete! The results are available in: F:\瞬译\dist
+22255 INFO: Build complete! The results are available in: F:\shunyi\dist
 
 ============================================================
   打包结束。生成的 exe 在 dist 文件夹里：dist\瞬译.exe
@@ -26,7 +26,7 @@
 打包完成后，项目里会多出：
 
 ```
-F:\瞬译\
+F:\shunyi\
 ├── dist\
 │   └── 瞬译.exe          ← 最终成果，约 50 MB
 └── build\                ← 打包临时文件，可以删掉
@@ -85,7 +85,7 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
 
 ## 测试打包好的 exe
 
-1. 打开 `F:\瞬译\dist` 文件夹，**双击 `瞬译.exe`**
+1. 打开 `F:\shunyi\dist` 文件夹，**双击 `瞬译.exe`**
 2. 首次启动可能需要 5～10 秒（解压 + 加载模型），然后右下角出现蓝色"译"图标
 3. 打开记事本，打中文，按 `Alt + J`，验证是否原地变英文
 

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import models, paths   # noqa: E402
 
 RUN_DIR = os.path.join(os.environ["LOCALAPPDATA"], "ShunYi")
-PROJECT = r"F:\瞬译"
+PROJECT = r"F:\shunyi"
 
 
 def walk_report(root, title):

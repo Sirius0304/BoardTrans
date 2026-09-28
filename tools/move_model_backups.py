@@ -7,7 +7,7 @@
 import os
 import shutil
 
-SRC = r"F:\瞬译\models"
+SRC = r"F:\shunyi\models"
 DST = r"F:\瞬译_备份_20260927\离线部署用模型包"
 
 print("=" * 66)

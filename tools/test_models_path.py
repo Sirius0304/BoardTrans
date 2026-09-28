@@ -72,7 +72,7 @@ def main():
     check("配置项 models_root 能覆盖", os.path.abspath(got) == os.path.abspath(good_dir), got)
 
     # 2c 非 ASCII 的配置必须被拒绝（否则 sentencepiece 会崩）
-    bad_dir = r"F:\瞬译\中文模型目录"
+    bad_dir = r"F:\shunyi\中文模型目录"
     config.update(models_root=bad_dir)
     paths.reset_models_root_cache()
     got = paths.models_root()

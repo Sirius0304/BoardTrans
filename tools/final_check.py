@@ -15,7 +15,7 @@ for k in ("zh_en", "en_ja"):
 
 print()
 print("=== 项目目录里已无模型包（不会再被当副本删除）===")
-print(f"  models/ 目录存在: {os.path.isdir(r'F:\瞬译\models')}")
+print(f"  models/ 目录存在: {os.path.isdir(r'F:\shunyi\models')}")
 for k in ("zh_en", "en_ja"):
     print(f"  find_extra_copies('{k}') = {models.find_extra_copies(k)}")
 

@@ -3,7 +3,7 @@
 import os
 import shutil
 
-PROJECT = r"F:\瞬译"
+PROJECT = r"F:\shunyi"
 
 print("=== 清理打包临时产物 ===")
 prev = os.path.join(PROJECT, "dist", "瞬译_上一版.exe")

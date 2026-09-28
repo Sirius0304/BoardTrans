@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from PyInstaller.archive.readers import CArchiveReader  # noqa: E402
 
-EXE = sys.argv[1] if len(sys.argv) > 1 else r"F:\瞬译\dist\瞬译.exe"
+EXE = sys.argv[1] if len(sys.argv) > 1 else r"F:\shunyi\dist\瞬译.exe"
 
 
 def classify(name: str) -> str:

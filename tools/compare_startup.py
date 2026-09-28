@@ -12,7 +12,7 @@ import time
 
 LOG = os.path.join(os.environ["LOCALAPPDATA"], "ShunYi", "logs", "shunyi.log")
 CANDIDATES = [
-    ("精简后 (34.1 MB)", r"F:\瞬译\dist\瞬译.exe"),
+    ("精简后 (34.1 MB)", r"F:\shunyi\dist\瞬译.exe"),
     ("精简前 (50.1 MB)", r"F:\瞬译_备份_20260927\瞬译_exe_精简前_50.1MB.exe"),
 ]
 RUNS = 3

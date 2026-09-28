@@ -8,7 +8,7 @@ import zipfile
 import ctranslate2
 import sentencepiece
 
-ROOT = r"F:\瞬译\models"
+ROOT = r"F:\shunyi\models"
 PKG = os.path.join(ROOT, "translate-zh_en-1_9.argosmodel")
 # 关键：运行数据必须放在纯 ASCII 路径，sentencepiece 无法打开含中文的路径
 WORK = os.path.join(os.environ["LOCALAPPDATA"], "ShunYiTest")
