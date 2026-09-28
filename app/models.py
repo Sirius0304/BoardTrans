@@ -564,6 +564,9 @@ def migrate_legacy_models() -> list[str]:
     pairs = [
         (os.path.join(old_root, "packages"), os.path.abspath(paths.packages_dir())),
         (os.path.join(old_root, "packages_cache"), os.path.abspath(paths.models_dir())),
+        # 旧位置也可能已经在用新名字 cache（例如改名前 models_root 回退到数据目录、
+        # 但子目录命名已是新版的情况），漏掉它会让 .argosmodel 缓存（186 MB）滞留旧位置
+        (os.path.join(old_root, "cache"), os.path.abspath(paths.models_dir())),
     ]
     done: list[str] = []
     for old, new in pairs:

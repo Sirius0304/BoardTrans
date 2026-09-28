@@ -6,7 +6,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import config                 # noqa: E402
+from app import config, paths          # noqa: E402
 from app.engine import TranslationEngine   # noqa: E402
 
 PROJECT = r"F:\shunyi"
@@ -37,7 +37,7 @@ print(f"  备份目录        {mb(size_of(BACKUP)):9.1f} MB   {BACKUP}")
 print()
 print("  必须保留的东西是否都在：")
 checks = [
-    ("翻译模型（运行用）", os.path.isdir(os.path.join(RUN, "packages"))),
+    ("翻译模型（运行用）", os.path.isdir(paths.packages_dir())),
     ("用户配置 config.json", os.path.exists(os.path.join(RUN, "config.json"))),
     ("最终 exe", os.path.exists(EXE)),
     ("项目数据 .workbuddy", os.path.isdir(os.path.join(PROJECT, ".workbuddy"))),

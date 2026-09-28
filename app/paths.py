@@ -104,7 +104,7 @@ def _is_usable_dir(path: str) -> bool:
     """这个目录能不能用来放模型：必须**纯 ASCII**且可写。
 
     为什么要卡 ASCII：sentencepiece 是 C++ 实现，打不开非 ASCII 路径。
-    实测（2026-09-27）把模型放到 F:\shunyi\\models\\ 下会直接报
+    实测（2026-09-27）把模型放到 F:\\瞬译\\models\\ 下会直接报
         RuntimeError: NOT_FOUND: "...sentencepiece.model": No such file or directory
     ——文件明明存在，但它就是读不到。所以含中文的路径一律跳过。
     """
@@ -145,7 +145,7 @@ def models_root() -> str:
       4. 回退到程序数据目录            —— 前三个都不可用时（例如软件装在含中文的目录）
 
     重要：前三个候选只要不满足"纯 ASCII + 可写"就会被跳过。
-    也就是说，如果软件放在含中文的路径下（如 F:\shunyi\\），
+    也就是说，如果软件放在含中文的路径下（如 F:\\瞬译\\），
     模型会自动回退到数据目录，而不是错误地放到读不了的地方。
     """
     global _models_root_cache
