@@ -29,6 +29,9 @@ dist_new/
 !瞬译_精简.spec
 !自检_精简.spec
 
+# ---- 放在根目录的成品 exe（34 MB，交付时才拷过来，不入库）----
+/*.exe
+
 # ---- 运行时产物（真正的运行数据在 %LOCALAPPDATA%\ShunYi，不在项目里）----
 *.log
 *.tmp
