@@ -40,7 +40,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, start, end, status=206, short=False, stall=False):
+    def _send(self, start, end, status=206, short=False, stall=0.0):
         end = min(end, len(DATA) - 1)
         length = end - start + 1
         if status == 206:
@@ -56,10 +56,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sent = 0
         t0 = time.time()
         try:
+            if stall and sent == 0:
+                time.sleep(stall)          # 模拟"连上后长时间没有数据"
             while sent < body_len:
                 n = min(READ_CHUNK, body_len - sent)
-                if stall and sent == 0:
-                    time.sleep(4.0)        # 模拟"连上后长时间没有数据"→ 客户端读超时
                 self.wfile.write(DATA[start + sent:start + sent + n])
                 sent += n
                 drift = sent / RATE - (time.time() - t0)
@@ -74,12 +74,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with Handler.counter_lock:
             Handler.counter += 1
             idx = Handler.counter
-        if mode == "flaky" and rng:
-            # 只让第 3 个请求卡住一次，之后的请求恢复正常 —— 模拟瞬时超时
+        if mode in ("flaky", "slowstall") and rng:
+            # 只让第 3 个请求卡住一次，之后的请求恢复正常
             spec = rng.split("=", 1)[1]
             first, _, last = spec.partition("-")
+            stall = 4.0 if mode == "flaky" else 40.0
             self._send(int(first), int(last) if last else len(DATA) - 1,
-                       status=206, stall=(idx == 3))
+                       status=206, stall=(stall if idx == 3 else 0.0))
             return
         if mode == "norange" or not rng:
             self._send(0, len(DATA) - 1, status=200)
@@ -188,6 +189,23 @@ def case_flaky(url, dest):
     return ok
 
 
+def case_slow_stall(url, dest):
+    print("\n[E] 连接卡死 40 秒 → 卡顿超时应在 ~20 秒内放弃并重试（不再干等 120 秒）", flush=True)
+    ok = False
+    t0 = time.time()
+    try:
+        # timeout=120 就是应用里的默认值；若不生效则要等满 40 秒才拿到数据
+        models._ranged_download(url, dest, SIZE, None, "卡顿超时测试", 120, None, threads=4)
+        elapsed = time.time() - t0
+        same = sha_of(dest) == SRC_SHA
+        ok = same and elapsed < 32.0
+        print("  耗时 %.1f s，sha256 一致: %s → %s"
+              % (elapsed, same, "通过 OK" if ok else "失败"))
+    except Exception as exc:  # noqa: BLE001
+        print("  异常: %s: %s → 失败" % (type(exc).__name__, exc))
+    return ok
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="shunyi_edge_")
     dest = os.path.join(tmp, "out.bin")
@@ -212,6 +230,12 @@ def main():
         if os.path.exists(dest):
             os.remove(dest)
         results.append(("D 单片重试", case_flaky(url, dest)))
+
+        Handler.mode = "slowstall"
+        Handler.counter = 0
+        if os.path.exists(dest):
+            os.remove(dest)
+        results.append(("E 卡顿超时", case_slow_stall(url, dest)))
         srv.shutdown()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

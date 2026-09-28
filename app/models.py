@@ -59,6 +59,12 @@ MULTITHREAD_MIN_SIZE = 4 * 1024 * 1024       # 小于 4 MB 的文件不值当开
 SLICE_MIN_SIZE = 1024 * 1024                 # 单片下限
 SLICE_FACTOR = 3                             # 切片数 = 线程数 × 该倍数
 SLICE_ATTEMPTS = 3                           # 单片最大尝试次数（含首次）
+STALL_TIMEOUT = 20                           # 单片单次读取的最长等待（秒）
+# 为什么要单独的"卡顿超时"：urlopen 的 timeout 默认 120 秒，
+# 一条连接彻底卡死后要干等 2 分钟才轮到重试——实测真机下载就在 95.6% 处
+# 遇到过这种卡顿。把单片单次等待压到 20 秒，"重试该片"能及时发生；
+# 而正常连接的 256 KB 数据块间隔远小于 20 秒（0.05 MB/s 的极端慢速也才 5 秒），
+# 所以不会误伤"慢但活着"的连接。
 # 为什么要有片级重试（2026-09-28 实测）：切片变多意味着请求数变多
 # （71 MB 从 16 个请求变成 49 个），撞上"某条连接读超时"的概率随之上升。
 # 实测真机下载在 95.6% 处有一片读超时，若按"任一片失败即整体失败"处理，
@@ -287,7 +293,9 @@ def _ranged_download(url: str, dest: str, total: int, progress_cb, label: str,
         """下载一片并写入文件；把本片已收字节数记在 got[0] 里（供失败时回退进度）。"""
         headers = {"User-Agent": USER_AGENT, "Range": f"bytes={start}-{end}"}
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # 用卡顿超时（而不是 urlopen 的 120 秒）——卡死的连接 20 秒没数据就放弃，
+        # 交给上层重试这一片，避免"看着像卡住、其实在干等两分钟"
+        with urllib.request.urlopen(req, timeout=min(timeout, STALL_TIMEOUT)) as resp:
             if resp.status != 206:
                 raise IOError(f"服务器返回 {resp.status}（不支持分块）")
             f.seek(start)

@@ -189,6 +189,8 @@ class SettingsWindow:
         self._cancel_events: dict[str, threading.Event] = {}
         # 正在下载的模型 key 集合（含"作为依赖被带上下载"的），用于防止重复发起
         self._active_downloads: set[str] = set()
+        # 每个模型最近一次进度采样 {t, done, text}，用来算瞬时速度与剩余时间
+        self._dl_samples: dict[str, dict] = {}
         self._model_status: dict[str, dict] = {}
         self._last_config_snapshot: tuple | None = None
         self._section_wrappers: list = []        # 各区块容器，用于定位提示条的插入位置
@@ -845,6 +847,36 @@ class SettingsWindow:
             self._queue.put(("progress", (key, done, total, label)))
         models.ensure(key, progress_cb=progress, cancel_event=cancel)
 
+    def _download_rate_text(self, key: str, done: int, total: int) -> str:
+        """按 1 秒窗口算瞬时速度与预计剩余时间，返回可供状态栏拼接的文本。
+
+        为什么要有它：进度回调只给"已下载字节数"，服务端限速会让人看到百分比
+        长时间不动，分不清是卡住还是在慢慢走。把速度和剩余时间显示出来，
+        用户能立刻看懂当前是什么状况（配合"连接卡顿，正在重试"的提示）。
+        """
+        now = time.time()
+        st = self._dl_samples.get(key)
+        if st is None:
+            st = {"t": now, "done": done, "text": ""}
+        dt = now - st["t"]
+        if dt >= 1.0:
+            delta = done - st["done"]
+            rate = delta / dt if delta > 0 else 0.0
+            if rate > 0:
+                text = f"　· {rate / 1024 / 1024:.2f} MB/s"
+                if total:
+                    remain = max(total - done, 0)
+                    eta = remain / rate
+                    if eta >= 60:
+                        text += f" · 约剩 {int(eta // 60)} 分 {int(eta % 60)} 秒"
+                    else:
+                        text += f" · 约剩 {int(eta)} 秒"
+            else:
+                text = "　· 速度 0 MB/s（连接卡顿，正在重试）"
+            st["t"], st["done"], st["text"] = now, done, text
+        self._dl_samples[key] = st
+        return st["text"]
+
     def _on_download_progress(self, key: str, done: int, total: int, label: str = "") -> None:
         ui = self._model_ui.get(key)
         if not ui:
@@ -858,14 +890,17 @@ class SettingsWindow:
             size_text = f"{done/1024/1024:.1f} / {total/1024/1024:.1f} MB"
         else:
             size_text = f"已下载 {done/1024/1024:.1f} MB"
+        rate_text = self._download_rate_text(key, done, total)
         self._model_status[key] = {"status": "downloading", "percent": percent, "error": ""}
-        ui["status"].configure(text=f"状态：正在下载 {percent}%　（{size_text}）", fg=COLOR_PRIMARY)
+        ui["status"].configure(
+            text=f"状态：正在下载 {percent}%　（{size_text}）{rate_text}", fg=COLOR_PRIMARY)
         if total:
             ui["progress"]["value"] = percent
 
     def _on_download_done(self, key: str, ok: bool, message: str) -> None:
         self._model_status[key] = {"status": "installed" if ok else "absent", "percent": 0, "error": message}
         self._active_downloads.discard(key)
+        self._dl_samples.pop(key, None)      # 清掉速度采样，下次下载重新起算
         # 先刷新界面、再弹窗：弹窗会阻塞窗口线程，先刷新能保证关掉弹窗后界面立刻是对的
         self._refresh_models()
         self._dirty = False
