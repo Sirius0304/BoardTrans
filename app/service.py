@@ -21,7 +21,7 @@ from typing import Callable
 
 import keyboard
 
-from . import config, models, paths
+from . import config, models, notify as notify_mod, paths
 from .capture import capture_selected_text
 from .console import safe_print
 from .engine import TranslationEngine
@@ -125,8 +125,12 @@ class HotkeyService:
 
     def __init__(self, notify: NotifyFn | None = None):
         self.cfg = config.load()
-        # 默认通知方式：打印到控制台（托盘模式会把它替换成托盘气泡）
-        self._notify = notify or (lambda title, message: safe_print(f"[{title}] {message}"))
+        # 所有通知统一走 app/notify.py 这个唯一入口：那里会读「通知提醒」开关
+        # （关掉就一条都不发），并做同事件去重。传入的 notify 参数只表示
+        # "实际怎么发"（控制台打印 / 测试收集），不参与"要不要发"的决策。
+        if notify is not None:
+            notify_mod.set_sink(notify)
+        self._notify = notify_mod.notify
         self._engine: TranslationEngine | None = None
         self._engine_lock = threading.Lock()
         self._jobs: queue.Queue = queue.Queue()
@@ -164,7 +168,11 @@ class HotkeyService:
         threading.Thread(target=self._idle_watchdog, name="shunyi-idle", daemon=True).start()
 
     def notify(self, title: str, message: str) -> None:
-        """对外暴露的通知接口（供设置窗口使用；托盘会把气泡接管过去）。"""
+        """对外暴露的通知接口（供设置窗口使用）。
+
+        注意：这里不再直接对接托盘，而是走 app/notify.py 的统一入口，
+        由入口决定"要不要发"（受「通知提醒」开关控制）与"怎么发"。
+        """
         self._notify(title, message)
 
     def stop(self) -> None:

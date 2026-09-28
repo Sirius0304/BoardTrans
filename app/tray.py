@@ -22,7 +22,7 @@ import threading
 import pystray
 from pystray import Menu, MenuItem
 
-from . import config, icon, paths
+from . import config, icon, notify as notify_mod, paths
 from .logger import get_logger
 
 log = get_logger()
@@ -42,11 +42,19 @@ class TrayApp:
             "瞬译 - 打字即翻译",
             menu=self._build_menu(),
         )
-        service._notify = self.notify      # 把服务里的通知接到托盘气泡
+        # 只注入"实际怎么发"（气泡），不注入"要不要发" ——
+        # 是否提醒由 app/notify.py 内的「通知提醒」开关统一决定，
+        # 不能再像以前那样直接把 service._notify 换成裸发送函数（那会绕过开关）。
+        notify_mod.set_sink(self._balloon)
 
     # ---------------- 通知 ----------------
 
     def notify(self, title: str, message: str) -> None:
+        """托盘自身的提醒也走统一入口（受「通知提醒」开关控制）。"""
+        notify_mod.notify(title, message)
+
+    def _balloon(self, title: str, message: str) -> None:
+        """真正的气泡发送实现（作为 app.notify 的 sink 注入，不判断开关）。"""
         try:
             if message:
                 self.icon.notify(message, title)

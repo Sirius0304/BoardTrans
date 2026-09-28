@@ -406,19 +406,22 @@ class SettingsWindow:
             }
             self._model_status[key] = {"status": "unknown", "percent": 0, "error": ""}
 
-        # 下载完成提醒开关（默认关：改用托盘气泡，不打断用户）
-        self._notify_done_var = tk.BooleanVar(value=False)
+        # 「通知提醒」总开关（默认开）。关掉后所有气泡提醒都不再弹出，
+        # 是否提醒由 app/notify.py 的统一入口判定，这里只负责编辑配置值。
+        self._notify_enabled_var = tk.BooleanVar(value=True)
         line = tk.Frame(card, bg=COLOR_CARD)
         line.pack(fill="x", padx=14, pady=(10, 2))
-        ttk.Checkbutton(line, text="下载完成后弹出提醒窗口",
-                        variable=self._notify_done_var,
+        ttk.Checkbutton(line, text="通知提醒",
+                        variable=self._notify_enabled_var,
                         command=self._on_notify_change).pack(side="left")
-        tk.Label(card, text="不勾选时改用托盘气泡提示，不打断你手头的事（默认）。",
+        tk.Label(card, text="关闭后所有气泡提醒都不再弹出（翻译完成、取词失败、快捷键冲突、"
+                            "模型下载完成/失败、启动提示等），只记日志。默认开启。",
                  bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w").pack(fill="x", padx=14, pady=(0, 12))
+                 anchor="w", justify="left", wraplength=520
+                 ).pack(fill="x", padx=14, pady=(0, 12))
 
     def _on_notify_change(self) -> None:
-        """用户切换「下载完成后弹出提醒窗口」。"""
+        """用户切换「通知提醒」。保存后立即生效（入口每次都读最新配置）。"""
         if self._syncing:
             return
         self._mark_dirty()
@@ -548,7 +551,7 @@ class SettingsWindow:
         cfg = config.load(force=force)
         self._last_config_snapshot = (cfg.get("hotkey"), cfg.get("quality"),
                                       int(cfg.get("idle_unload_minutes", 0) or 0) > 0,
-                                      bool(cfg.get("notify_download_done")))
+                                      bool(cfg.get("notify_enabled", True)))
         self._syncing = True
         try:
             self._pending_hotkey = str(cfg.get("hotkey") or DEFAULT_HOTKEY)
@@ -559,7 +562,7 @@ class SettingsWindow:
             self._hotkey_entry.configure(state="readonly")
             self._quality_var.set(self._pending_quality)
             self._idle_unload_var.set(int(cfg.get("idle_unload_minutes", 0) or 0) > 0)
-            self._notify_done_var.set(bool(cfg.get("notify_download_done")))
+            self._notify_enabled_var.set(bool(cfg.get("notify_enabled", True)))
             self._dirty = False
             self._update_dirty_bar()
         finally:
@@ -575,7 +578,7 @@ class SettingsWindow:
         cfg = config.load()
         snapshot = (cfg.get("hotkey"), cfg.get("quality"),
                     int(cfg.get("idle_unload_minutes", 0) or 0) > 0,
-                    bool(cfg.get("notify_download_done")))
+                    bool(cfg.get("notify_enabled", True)))
         if snapshot == self._last_config_snapshot:
             return
         self._load_from_config(force=True)
@@ -717,6 +720,17 @@ class SettingsWindow:
                 ui["status"].configure(text=f"状态：删除未完成（{reason}）", fg=COLOR_WARN_FG)
                 ui["action"].configure(text="重试删除",
                                        command=lambda k=key: self._on_delete_model(k))
+                ui["action"].state(["!disabled"])
+                ui["progress"].pack_forget()
+                continue
+
+            # 上次下载失败：常驻显示原因，并给出"重试下载"（关闭通知时这是唯一提示）
+            if state.get("status") == "failed":
+                reason = state.get("error") or "未知原因"
+                ui["status"].configure(
+                    text=f"状态：下载失败（{reason.splitlines()[0]}）", fg=COLOR_WARN_FG)
+                ui["action"].configure(text="重试下载",
+                                       command=lambda k=key: self._on_download_model(k))
                 ui["action"].state(["!disabled"])
                 ui["progress"].pack_forget()
                 continue
@@ -898,32 +912,29 @@ class SettingsWindow:
             ui["progress"]["value"] = percent
 
     def _on_download_done(self, key: str, ok: bool, message: str) -> None:
-        self._model_status[key] = {"status": "installed" if ok else "absent", "percent": 0, "error": message}
+        cancelled = "取消" in (message or "")
+        if ok:
+            state = "installed"
+        elif cancelled:
+            state = "absent"       # 用户主动取消：不算失败，卡片回到「未下载」
+        else:
+            # 失败：卡片常驻显示失败原因。这样即使用户关掉了「通知提醒」，
+            # 也不会因为"没有弹窗"而完全不知道下载失败了、为什么失败。
+            state = "failed"
+        self._model_status[key] = {"status": state, "percent": 0, "error": message}
         self._active_downloads.discard(key)
         self._dl_samples.pop(key, None)      # 清掉速度采样，下次下载重新起算
-        # 先刷新界面、再弹窗：弹窗会阻塞窗口线程，先刷新能保证关掉弹窗后界面立刻是对的
+        # 先刷新界面、再通知：提醒会占用窗口线程，先刷新能保证提醒消失后界面立刻是对的
         self._refresh_models()
         self._dirty = False
         self._update_dirty_bar()
         if ok:
             self.service.preload()      # 下载完顺手把模型读进内存，用户点保存后马上能用
-            if config.load().get("notify_download_done"):
-                messagebox.showinfo("下载完成", "模型已下载并安装完成，现在可以正常翻译了。",
-                                    parent=self.root)
-            else:
-                # 默认**不弹模态窗口**，改用托盘气泡提示：不打断用户手头的事，
-                # 想恢复弹窗可以在设置里把「下载完成后弹出提醒窗口」勾上
-                try:
-                    self.service.notify("模型下载完成", "现在可以正常翻译了。")
-                except Exception:  # noqa: BLE001
-                    pass
-        else:
-            if "取消" not in message:
-                messagebox.showerror(
-                    "下载失败",
-                    f"{message}\n\n可以点击「下载」重试。\n"
-                    f"若反复失败，可手动下载模型包放到：\n{paths.models_dir()}",
-                    parent=self.root)
+            # 走统一通知入口：开关（「通知提醒」）在入口里判定，同一次事件只提醒一次
+            self.service.notify("模型下载完成", "现在可以正常翻译了。")
+        elif not cancelled:
+            first_line = (message or "未知原因").strip().splitlines()[0]
+            self.service.notify("模型下载失败", f"{first_line}（可在设置窗口点「重试下载」）")
 
     def _cancel_download(self, key: str) -> None:
         event = self._cancel_events.get(key)
@@ -1044,9 +1055,9 @@ class SettingsWindow:
         # 内存优化：勾选=空闲 15 分钟释放，不勾=常驻
         new_idle_minutes = 15 if self._idle_unload_var.get() else 0
         old_idle_minutes = int(cfg.get("idle_unload_minutes", 0) or 0)
-        # 下载完成提醒
-        new_notify = bool(self._notify_done_var.get())
-        old_notify = bool(cfg.get("notify_download_done"))
+        # 通知提醒总开关
+        new_notify = bool(self._notify_enabled_var.get())
+        old_notify = bool(cfg.get("notify_enabled", True))
 
         hotkey_changed = new_hotkey != cfg.get("hotkey")
         quality_changed = new_quality != cfg.get("quality")
@@ -1082,7 +1093,7 @@ class SettingsWindow:
             self.service.reload_config()
 
         if notify_changed:
-            config.update(notify_download_done=new_notify)
+            config.update(notify_enabled=new_notify)
             self.service.reload_config()
 
         self._pending_quality = new_quality
@@ -1131,7 +1142,7 @@ class SettingsWindow:
             self._hotkey_entry.configure(state="readonly")
             self._quality_var.set("fast")
             self._idle_unload_var.set(True)
-            self._notify_done_var.set(False)
+            self._notify_enabled_var.set(True)
         finally:
             self._syncing = False
         self._mark_dirty()
