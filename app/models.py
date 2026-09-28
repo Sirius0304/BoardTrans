@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from collections import deque
 
 from . import paths
 from .logger import get_logger
@@ -43,6 +44,26 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ShunYi/1.0"
 CHUNK_SIZE = 1024 * 256                      # 单次读取的块大小
 DEFAULT_THREADS = 16                         # 分块下载线程数
 MULTITHREAD_MIN_SIZE = 4 * 1024 * 1024       # 小于 4 MB 的文件不值当开多线程
+
+# 动态切片参数（2026-09-28 加入，解决"末段降速"）
+# ---------------------------------------------------------------------------
+# 原来按线程数静态均分区间，每线程只下自己那一段。由于单连接速度波动极大
+# （实测 0.15 ~ 0.40 MB/s），必然有线程早早完工、有线程拖到最后：
+# 末段活跃连接从 16 掉到 1，聚合速度从 0.81 跌到单连接的 0.2 MB/s 左右。
+# 71 MB 的模型尾巴能拖将近 1 分钟，看起来就是"下载快完成了却越来越慢"。
+#
+# 现在改成"把文件切成小片放进队列、线程动态领取"：谁快谁多领，
+# 尾巴最多只剩一片（而不是一整段区间），末段耗时被压到一个切片的量级。
+# 切片不能太小——每片是一个独立的 Range 请求，走国际链路握手要花时间，
+# 所以单片下限 1 MB、片数取线程数的 3 倍（握手开销占比约 10%）。
+SLICE_MIN_SIZE = 1024 * 1024                 # 单片下限
+SLICE_FACTOR = 3                             # 切片数 = 线程数 × 该倍数
+SLICE_ATTEMPTS = 3                           # 单片最大尝试次数（含首次）
+# 为什么要有片级重试（2026-09-28 实测）：切片变多意味着请求数变多
+# （71 MB 从 16 个请求变成 49 个），撞上"某条连接读超时"的概率随之上升。
+# 实测真机下载在 95.6% 处有一片读超时，若按"任一片失败即整体失败"处理，
+# 已下好的 71 MB 会全部作废并退回单线程从头再来（多花 160 秒）。
+# 现在单片失败会先回退该片进度、重下这一片（不动其它片），重试仍失败才整体失败。
 
 # 关于下载速度的实测记录（2026-09-27，本机 20 核 / 家宽，argos-net.com）
 # ---------------------------------------------------------------------------
@@ -61,6 +82,19 @@ MULTITHREAD_MIN_SIZE = 4 * 1024 * 1024       # 小于 4 MB 的文件不值当开
 #       71 MB 的模型从约 5.4 分钟缩短到约 1.5 分钟。
 #
 # 注意：必须让每块至少 4 MB，否则线程数收益被调度开销吃掉。
+#
+# 末段降速与修法（2026-09-28）
+# ---------------------------------------------------------------------------
+# 现象：下载快到 100% 时明显变慢。原因不是磁盘或校验，而是**静态均分区间的掉队效应**：
+#       每线程只下自己那一段，而单连接速度波动很大（0.15 ~ 0.40 MB/s），
+#       必然有线程早早完工、有线程拖到最后——末段活跃连接从 16 掉到 1，
+#       聚合速度塌到单连接水平（0.81 → 0.2 MB/s），尾巴能拖半分钟以上。
+# 修法：改成"切片入队 + 线程动态领取"（见 _ranged_download 与 SLICE_* 常量），
+#       尾巴最多只剩一片。本地限速服务器 A/B（64 MB，两条慢连接 0.2 MB/s）：
+#           静态均分：总耗时 20.1 s，尾巴 95→100% 7.5 s
+#           动态领取：总耗时  6.7 s，尾巴 95→100% 3.9 s（缩短 47%）
+#       真实链路复验 zh_en（71 MB，16 线程 / 49 片）：
+#           44.7 s 完成，平均 1.59 MB/s，尾巴 95→100% 5.0 s，sha256 与原缓存一致。
 
 
 class DownloadCancelled(Exception):
@@ -209,8 +243,16 @@ def _ranged_download(url: str, dest: str, total: int, progress_cb, label: str,
     为什么有效：实测官方源单连接只有 0.38 MB/s，8 个并发连接能到 0.62 MB/s
     （+63%）——服务器对单连接有限速，并发能绕过一部分。
 
-    实现要点：先按总大小预分配文件，每个线程用**自己独立的文件句柄**
-    seek 到自己的区间再写，各写各的互不重叠，避免并发写冲突。
+    实现要点：
+      1. 先按总大小预分配文件，每个线程用**自己独立的文件句柄** seek 到目标
+         位置再写，各写各的互不重叠，避免并发写冲突；
+      2. 区间**动态领取**而非静态均分：整个文件先切成"线程数 × SLICE_FACTOR"个小片
+         放进队列，线程下完一片再领下一片。这样快的线程自然多干、慢的少干，
+         尾巴最多只剩一片（静态均分时会剩下一整段，末段只靠最慢那条连接硬拖，
+         聚合速度从 0.81 掉到 0.2 MB/s 左右，看起来就是"越下越慢"）；
+      3. 单片失败先重试该片（最多 SLICE_ATTEMPTS 次，进度如实回退），
+         避免"一片瞬时超时把已下好的整个文件作废、退回单线程从头再来"。
+         重试仍失败才整体判失败，由上层回退单线程。
     """
     if os.path.exists(dest):
         os.remove(dest)                       # 多线程模式不做区间续传，从头下
@@ -219,38 +261,85 @@ def _ranged_download(url: str, dest: str, total: int, progress_cb, label: str,
     with open(dest, "wb") as f:
         f.truncate(total)
 
-    per = total // threads
+    # 切片：保证每片至少 SLICE_MIN_SIZE，片数约为线程数的 SLICE_FACTOR 倍。
+    # 片太大会退化成静态均分（尾巴长），太小则握手开销吃掉收益。
+    step = max(SLICE_MIN_SIZE, total // (threads * SLICE_FACTOR))
+    pending: deque = deque()
+    cursor = 0
+    while cursor < total:
+        end = min(cursor + step, total) - 1
+        pending.append((cursor, end))
+        cursor = end + 1
+
     done = [0]
     lock = threading.Lock()
     errors: list[str] = []
     last_report = [0.0]
 
-    def worker(start: int, end: int):
+    def next_slice():
+        """领一片待下载区间；返回 None 表示全部领完。"""
+        with lock:
+            if not pending:
+                return None
+            return pending.popleft()
+
+    def fetch_slice(start: int, end: int, f, got: list):
+        """下载一片并写入文件；把本片已收字节数记在 got[0] 里（供失败时回退进度）。"""
         headers = {"User-Agent": USER_AGENT, "Range": f"bytes={start}-{end}"}
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 206:
+                raise IOError(f"服务器返回 {resp.status}（不支持分块）")
+            f.seek(start)
+            pos = start
+            while pos <= end:
+                if _is_cancelled(cancel_event):
+                    raise DownloadCancelled("已取消下载")
+                chunk = resp.read(min(CHUNK_SIZE, end - pos + 1))
+                if not chunk:
+                    # 响应提前结束：预分配的文件里会留一段空洞，
+                    # 与其留下"看起来完整实则残缺"的文件，不如直接判失败
+                    raise IOError(
+                        f"分片 {start}-{end} 响应提前结束（已收 {pos - start} 字节）")
+                f.write(chunk)
+                pos += len(chunk)
+                got[0] = pos - start
+                with lock:
+                    done[0] += len(chunk)
+                    now = time.time()
+                    if progress_cb and now - last_report[0] > 0.2:
+                        last_report[0] = now
+                        progress_cb(label, done[0], total)
+
+    def worker():
         try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                if resp.status != 206:
-                    with lock:
-                        errors.append(f"服务器返回 {resp.status}（不支持分块）")
-                    return
-                with open(dest, "r+b") as f:     # 每线程独立句柄，各自 seek 互不干扰
-                    f.seek(start)
-                    pos = start
-                    while pos <= end:
-                        if _is_cancelled(cancel_event):
-                            raise DownloadCancelled("已取消下载")
-                        chunk = resp.read(min(CHUNK_SIZE, end - pos + 1))
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        pos += len(chunk)
-                        with lock:
-                            done[0] += len(chunk)
-                            now = time.time()
-                            if progress_cb and now - last_report[0] > 0.2:
-                                last_report[0] = now
-                                progress_cb(label, done[0], total)
+            with open(dest, "r+b") as f:      # 每线程一个句柄，各片之间互不重叠
+                while True:
+                    if _is_cancelled(cancel_event):
+                        raise DownloadCancelled("已取消下载")
+                    item = next_slice()
+                    if item is None:
+                        break                 # 队列空 → 活干完了
+                    start, end = item
+                    got = [0]                 # 本片已计入进度的字节数
+                    for attempt in range(1, SLICE_ATTEMPTS + 1):
+                        try:
+                            fetch_slice(start, end, f, got)
+                            break             # 本片下完，继续领下一片
+                        except DownloadCancelled:
+                            raise
+                        except Exception as exc:  # noqa: BLE001
+                            # 这一片重来：先把已计入的字节数退回去，进度不会虚高
+                            if got[0]:
+                                with lock:
+                                    done[0] -= got[0]
+                                got[0] = 0
+                            if attempt >= SLICE_ATTEMPTS:
+                                raise
+                            log.warning("分片 %d-%d 第 %d 次失败（%s: %s），重试",
+                                        start, end, attempt,
+                                        type(exc).__name__, str(exc)[:60])
+                            time.sleep(0.6 * attempt)
         except DownloadCancelled:
             with lock:
                 errors.append("__cancelled__")
@@ -260,10 +349,7 @@ def _ranged_download(url: str, dest: str, total: int, progress_cb, label: str,
 
     workers = []
     for i in range(threads):
-        start = i * per
-        end = total - 1 if i == threads - 1 else (i + 1) * per - 1
-        t = threading.Thread(target=worker, args=(start, end),
-                             name=f"shunyi-dl-part-{i}", daemon=True)
+        t = threading.Thread(target=worker, name=f"shunyi-dl-part-{i}", daemon=True)
         workers.append(t)
         t.start()
     for t in workers:
