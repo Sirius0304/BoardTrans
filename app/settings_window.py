@@ -56,6 +56,10 @@ COLOR_WARN_BG = "#FFF6E5"
 COLOR_WARN_FG = "#9A6700"
 COLOR_OK = "#1A7F37"
 COLOR_ERR = "#C62828"
+# 窗口内轻量提醒条（保存结果提示）的底色，配合上面的前景色使用
+COLOR_OK_BG = "#E8F5EC"
+COLOR_INFO_BG = "#EDF3FE"
+COLOR_ERR_BG = "#FDECEC"
 
 # 界面上的模型卡片定义（key 对应 app/models.py 的注册表）
 MODEL_CARDS = [
@@ -340,6 +344,15 @@ class SettingsWindow:
                                      font="ShunYiSmall", anchor="w", justify="left")
         self._dirty_label.pack(fill="x", padx=12, pady=6)
 
+        # 保存结果轻量提醒条（自动消失，不弹窗；见 _show_notice）
+        self._notice_bar = tk.Frame(outer, bg=COLOR_OK_BG)
+        self._notice_label = tk.Label(self._notice_bar, text="", bg=COLOR_OK_BG, fg=COLOR_OK,
+                                      font="ShunYiSmall", anchor="w", justify="left",
+                                      wraplength=560)
+        self._notice_label.pack(fill="x", padx=12, pady=6)
+        self._notice_timer = None      # after() 的句柄，用于"新提醒顶掉旧倒计时"
+        self._notice_seq = 0           # 提醒序号：防止旧定时器把新提醒提前关掉
+
         # 三个区块
         self._build_models_section(outer)
         self._build_quality_section(outer)
@@ -557,6 +570,8 @@ class SettingsWindow:
         self._refresh_models()
 
     def _hide(self) -> None:
+        # 收起窗口时也把提醒条收掉：否则下次打开会看到上次残留的过期提醒
+        self._hide_notice()
         self.root.withdraw()
 
     # ---------------------------------------------------------- 配置读写
@@ -619,6 +634,15 @@ class SettingsWindow:
         self._pending_quality = self._quality_var.get()
         self._mark_dirty()
 
+    def _pack_hint_bar(self, bar) -> None:
+        """把一条提示条插到第一个区块之前（before 必须指向已经 pack 过的控件）。"""
+        if bar.winfo_manager():
+            return
+        if self._section_wrappers:
+            bar.pack(fill="x", padx=18, pady=(0, 10), before=self._section_wrappers[0])
+        else:
+            bar.pack(fill="x", padx=18, pady=(0, 10))
+
     def _update_dirty_bar(self) -> None:
         """显示/隐藏"有未保存修改"的提示条。"""
         if self._dirty:
@@ -627,14 +651,64 @@ class SettingsWindow:
             text = (f"有未保存的修改。当前实际生效的是：快捷键 {format_hotkey(cfg.get('hotkey'))}"
                     f"、档位 {live_q}。点「保存」后生效。")
             self._dirty_label.configure(text=text)
-            if not self._dirty_bar.winfo_manager():
-                # 插到第一个区块之前（before 必须指向一个已经 pack 过的控件）
-                if self._section_wrappers:
-                    self._dirty_bar.pack(fill="x", padx=18, pady=(0, 10), before=self._section_wrappers[0])
-                else:
-                    self._dirty_bar.pack(fill="x", padx=18, pady=(0, 10))
+            self._pack_hint_bar(self._dirty_bar)
         else:
             self._dirty_bar.pack_forget()
+
+    # ---------------------------------------------------- 保存结果的窗口内提醒
+
+    NOTICE_STYLE = {
+        # level: (底色, 字色, 默认停留秒数)
+        "ok": (COLOR_OK_BG, COLOR_OK, 3.0),
+        "info": (COLOR_INFO_BG, COLOR_PRIMARY, 2.6),
+        "err": (COLOR_ERR_BG, COLOR_ERR, 7.0),
+    }
+
+    def _show_notice(self, text: str, level: str = "ok", seconds: float | None = None) -> None:
+        """在设置窗口内显示一条会自动消失的轻量提醒（不弹窗、不阻塞）。
+
+        为什么用它替代弹窗：保存是高频操作，弹模态窗口还要用户点一下"确定"，
+        既打断操作也容易让人烦躁；这里只把结果贴在窗口里，到点自动消失。
+
+        关键细节：
+          * 用递增序号 + after_cancel 管理定时器 —— 连续点两次「保存」时，
+            旧提醒的倒计时不能把新提醒提前关掉；
+          * 文字较长（例如更换快捷键后的说明）时自动延长停留时间，保证能读完。
+        """
+        bg, fg, default_secs = self.NOTICE_STYLE.get(level, self.NOTICE_STYLE["ok"])
+        text = (text or "").replace("\n\n", "\n")
+        if seconds is None:
+            # 每多一行多停 0.9 秒，最多 7 秒
+            lines = text.count("\n") + 1
+            seconds = min(7.0, default_secs + 0.9 * (lines - 1))
+
+        self._notice_seq += 1
+        seq = self._notice_seq
+        if self._notice_timer is not None:
+            try:
+                self.root.after_cancel(self._notice_timer)
+            except Exception:  # noqa: BLE001
+                pass
+            self._notice_timer = None
+
+        self._notice_bar.configure(bg=bg)
+        self._notice_label.configure(text=text, bg=bg, fg=fg)
+        self._pack_hint_bar(self._notice_bar)
+        self._notice_timer = self.root.after(int(seconds * 1000), lambda: self._hide_notice(seq))
+
+    def _hide_notice(self, seq: int | None = None) -> None:
+        """收起提醒条。seq 不为空时，只有"最新那条"的定时器才允许关掉它。"""
+        if seq is not None and seq != self._notice_seq:
+            return
+        try:
+            self._notice_bar.pack_forget()
+        except Exception:  # noqa: BLE001
+            pass
+        self._notice_timer = None
+
+    def _notice_visible(self) -> bool:
+        """提醒条此刻是否可见（供测试与内部判断用）。"""
+        return bool(self._notice_bar.winfo_manager())
 
     def _update_speed_hint(self) -> None:
         quality = self._quality_var.get()
@@ -1084,21 +1158,19 @@ class SettingsWindow:
         if not hotkey_changed and not quality_changed and not memory_changed:
             self._dirty = False
             self._update_dirty_bar()
-            messagebox.showinfo("没有改动", "设置和当前生效的一致，无需保存。", parent=self.root)
+            self._show_notice("设置和当前生效的一致，无需保存。", "info")
             return
 
         # 1) 快捷键：先检测冲突 + 试注册，成功才落盘（失败则保留原键，绝不让软件失去响应快捷键的能力）
         if hotkey_changed:
             ok, reason = self.service.set_hotkey(new_hotkey)
             if not ok:
-                messagebox.showerror(
-                    "快捷键设置失败",
-                    f"无法使用「{format_hotkey(new_hotkey)}」。\n\n{reason}\n\n"
-                    f"已保留原来的快捷键「{format_hotkey(cfg.get('hotkey'))}」，"
-                    "你可以换一个组合再试。",
-                    parent=self.root)
                 self._pending_hotkey = cfg.get("hotkey")
                 self._load_from_config(force=True)
+                self._show_notice(
+                    f"快捷键「{format_hotkey(new_hotkey)}」没能生效：{reason}"
+                    f"已保留原来的「{format_hotkey(cfg.get('hotkey'))}」，可以换一个组合再试。",
+                    "err")
                 return
 
         if quality_changed:
@@ -1114,12 +1186,13 @@ class SettingsWindow:
 
         tip = "设置已保存并立即生效，无需重启软件。"
         if hotkey_changed:
-            tip += ("\n\n提示：新快捷键已经生效。如果按下去没反应，说明这个组合被别的软件抢占了"
+            tip += ("\n提示：新快捷键已经生效。如果按下去没反应，说明这个组合被别的软件抢占了"
                     "（这类冲突无法自动检测），换一个组合重新设置即可。")
         if memory_changed:
-            tip += ("\n\n内存优化已" + ("开启：挂机超过 15 分钟会自动释放模型内存。"
-                                        if new_idle_minutes else "关闭：模型会一直留在内存里，翻译始终最快。"))
-        messagebox.showinfo("已保存", tip, parent=self.root)
+            tip += ("\n内存优化已" + ("开启：挂机超过 15 分钟会自动释放模型内存。"
+                                      if new_idle_minutes else "关闭：模型会一直留在内存里，翻译始终最快。"))
+        # 窗口内轻量提醒：立即出现、到点自动消失，不打断操作
+        self._show_notice(tip, "ok")
 
     def _on_cancel(self) -> None:
         if self._dirty and not messagebox.askokcancel(
