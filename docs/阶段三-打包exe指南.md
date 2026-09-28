@@ -61,6 +61,10 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
     run_stage2.py
 ```
 
+> 注（2026-09-28 起）：**现在推荐直接双击项目根的 `3-打包exe.bat`**（它读取 `瞬译_精简.spec`），
+> 产物**直接生成在项目根目录** `瞬译.exe`，上一版自动归档到 `dist\瞬译_上一版.exe`。
+> 上面这段是最早那版的原始命令记录，其中的 `--distpath "dist"` 已不是现在的输出位置。
+
 **原因（实测踩过的坑）**：`ctranslate2` 的核心是一个 56.5 MB 的原生动态库 `ctranslate2.dll`。
 如果不加 `--collect-all ctranslate2`，PyInstaller 可能不把它收进去，
 打出来的 exe 只有 46 MB，看起来"打包成功了"，**但一运行就报 DLL 加载失败，根本不能翻译**。

@@ -21,7 +21,8 @@ for name in ("build", "build_selftest", "dist_new"):
 
 print()
 print("=== 最终状态 ===")
-exe = os.path.join(PROJECT, "dist", "瞬译.exe")
+# 成品 exe 现在直接放在项目根目录（打包脚本改了输出位置）
+exe = os.path.join(PROJECT, "瞬译.exe")
 print(f"  exe 体积: {os.path.getsize(exe)/1024/1024:.1f} MB")
 print(f"  dist 内容: {os.listdir(os.path.join(PROJECT, 'dist'))}")
 
