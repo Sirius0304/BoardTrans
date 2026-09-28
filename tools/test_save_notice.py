@@ -76,9 +76,15 @@ def main():
     holder = {}
 
     def grab():
+        box = settings._notice_box
         holder["visible"] = settings._notice_visible()
         holder["text"] = settings._notice_label.cget("text")
-        holder["bg"] = settings._notice_bar.cget("bg")
+        holder["bg"] = box.cget("bg")
+        holder["manager"] = box.winfo_manager()          # "place" = 浮动小框
+        parent_h = box.master.winfo_height()
+        mid = box.winfo_y() + box.winfo_height() / 2
+        holder["lower_half"] = mid > parent_h / 2        # 是否位于窗口下半部
+        holder["pos"] = f"y={box.winfo_y()} 高={box.winfo_height()} 窗口高={parent_h}"
 
     print("\n=== A0. 初始状态 ===")
     settings._queue.put(("call", grab))
@@ -100,7 +106,11 @@ def main():
           holder.get("immediate") is True, str(holder.get("immediate")))
     settings._queue.put(("call", grab))
     time.sleep(0.6)
-    check("提醒条已显示", holder.get("visible") is True, str(holder.get("visible")))
+    check("提醒框已显示", holder.get("visible") is True, str(holder.get("visible")))
+    check("以浮动小框形式弹出（place 定位，不改动原有布局）",
+          holder.get("manager") == "place", str(holder.get("manager")))
+    check("位置在窗口底部（下半部）而不是顶部",
+          holder.get("lower_half") is True, str(holder.get("pos")))
     check("内容准确：提到已保存/已生效",
           ("已保存" in holder.get("text", "")) and ("立即生效" in holder.get("text", "")),
           holder.get("text", ""))

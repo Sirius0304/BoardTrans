@@ -344,12 +344,15 @@ class SettingsWindow:
                                      font="ShunYiSmall", anchor="w", justify="left")
         self._dirty_label.pack(fill="x", padx=12, pady=6)
 
-        # 保存结果轻量提醒条（自动消失，不弹窗；见 _show_notice）
-        self._notice_bar = tk.Frame(outer, bg=COLOR_OK_BG)
-        self._notice_label = tk.Label(self._notice_bar, text="", bg=COLOR_OK_BG, fg=COLOR_OK,
+        # 保存结果轻量提醒：窗口**底部**弹出的一个小框（用 place 浮在内容之上，
+        # 不参与 pack 布局，所以弹出/消失都不会让上面的内容跳动）。
+        # 位置与配色见 _show_notice；默认不显示。
+        self._notice_box = tk.Frame(outer, bg=COLOR_OK_BG,
+                                    highlightbackground="#D9DDE3", highlightthickness=1)
+        self._notice_label = tk.Label(self._notice_box, text="", bg=COLOR_OK_BG, fg=COLOR_OK,
                                       font="ShunYiSmall", anchor="w", justify="left",
-                                      wraplength=560)
-        self._notice_label.pack(fill="x", padx=12, pady=6)
+                                      wraplength=500)
+        self._notice_label.pack(fill="x", padx=12, pady=8)
         self._notice_timer = None      # after() 的句柄，用于"新提醒顶掉旧倒计时"
         self._notice_seq = 0           # 提醒序号：防止旧定时器把新提醒提前关掉
 
@@ -365,6 +368,7 @@ class SettingsWindow:
         ttk.Button(footer, text="恢复默认设置", command=self._on_restore_defaults).pack(side="left")
         ttk.Button(footer, text="保存", style="Big.TButton", command=self._on_save).pack(side="right")
         ttk.Button(footer, text="取消", command=self._on_cancel).pack(side="right", padx=(0, 8))
+        self._footer = footer          # 提醒小框要贴在它上方
 
     def _card(self, parent, title: str) -> ttk.Frame:
         """创建一个白色卡片容器（带内边距与标题），并把外层容器登记下来。"""
@@ -665,12 +669,14 @@ class SettingsWindow:
     }
 
     def _show_notice(self, text: str, level: str = "ok", seconds: float | None = None) -> None:
-        """在设置窗口内显示一条会自动消失的轻量提醒（不弹窗、不阻塞）。
+        """在设置窗口**底部**弹出一个小框，自动消失（不弹窗、不阻塞、不改动布局）。
 
         为什么用它替代弹窗：保存是高频操作，弹模态窗口还要用户点一下"确定"，
-        既打断操作也容易让人烦躁；这里只把结果贴在窗口里，到点自动消失。
+        既打断操作也容易让人烦躁；这里只在窗口底部浮现一个小框，到点自动消失。
 
         关键细节：
+          * 用 place 定位（贴底部按钮行上方居中），不参与 pack 布局 ——
+            弹出与消失都不会让上面的内容跳动；
           * 用递增序号 + after_cancel 管理定时器 —— 连续点两次「保存」时，
             旧提醒的倒计时不能把新提醒提前关掉；
           * 文字较长（例如更换快捷键后的说明）时自动延长停留时间，保证能读完。
@@ -691,24 +697,34 @@ class SettingsWindow:
                 pass
             self._notice_timer = None
 
-        self._notice_bar.configure(bg=bg)
+        self._notice_box.configure(bg=bg)
         self._notice_label.configure(text=text, bg=bg, fg=fg)
-        self._pack_hint_bar(self._notice_bar)
+        # 贴在窗口底部：横向居中、纵向位于底部按钮行上方（小框底边锚定）
+        offset = 12
+        try:
+            offset = max(12, self._footer.winfo_reqheight() + 12)
+        except Exception:  # noqa: BLE001
+            pass
+        self._notice_box.place(relx=0.5, rely=1.0, y=-offset, anchor="s")
+        try:
+            self._notice_box.lift()          # 保证浮在卡片内容之上
+        except Exception:  # noqa: BLE001
+            pass
         self._notice_timer = self.root.after(int(seconds * 1000), lambda: self._hide_notice(seq))
 
     def _hide_notice(self, seq: int | None = None) -> None:
-        """收起提醒条。seq 不为空时，只有"最新那条"的定时器才允许关掉它。"""
+        """收起提醒小框。seq 不为空时，只有"最新那条"的定时器才允许关掉它。"""
         if seq is not None and seq != self._notice_seq:
             return
         try:
-            self._notice_bar.pack_forget()
+            self._notice_box.place_forget()
         except Exception:  # noqa: BLE001
             pass
         self._notice_timer = None
 
     def _notice_visible(self) -> bool:
-        """提醒条此刻是否可见（供测试与内部判断用）。"""
-        return bool(self._notice_bar.winfo_manager())
+        """提醒小框此刻是否可见（供测试与内部判断用）。"""
+        return bool(self._notice_box.winfo_manager())
 
     def _update_speed_hint(self) -> None:
         quality = self._quality_var.get()
