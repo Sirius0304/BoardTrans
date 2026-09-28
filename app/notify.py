@@ -45,10 +45,12 @@ def set_sink(fn: Callable[[str, str], None] | None) -> None:
 def is_enabled() -> bool:
     """「通知提醒」开关的当前状态。
 
-    每次调用都读最新配置（config 的内存缓存会在保存时同步更新），
-    所以用户切换开关后立即生效，无需重启。
+    用 config.load_if_changed()：如果配置文件被别的实例或手工编辑改过，
+    这里会立刻读到新值（不再拿启动时的旧快照），所以：
+      - 在设置窗口切换开关后立即生效（无需重启）；
+      - 多实例同时运行、或用户手改 config.json 时同样立即生效。
     """
-    return bool(config.get("notify_enabled", True))
+    return bool(config.load_if_changed().get("notify_enabled", True))
 
 
 def notify(title: str, message: str = "") -> bool:

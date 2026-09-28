@@ -59,6 +59,8 @@ DEFAULTS: dict = {
 
 _lock = threading.RLock()
 _cache: dict | None = None
+# 磁盘上配置文件的"指纹"（mtime_ns, 大小），用于判断别的进程/手工编辑是否改过它
+_stat_stamp: tuple | None = None
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -98,7 +100,7 @@ def load(force: bool = False) -> dict:
 
 def save(cfg: dict) -> None:
     """原子写入配置：临时文件 + os.replace（Windows 上也是原子操作）。"""
-    global _cache
+    global _cache, _stat_stamp
     path = paths.config_path()
     tmp = path + ".tmp"
     payload = _merge(DEFAULTS, cfg)
@@ -109,6 +111,33 @@ def save(cfg: dict) -> None:
             os.fsync(f.fileno())
         os.replace(tmp, path)   # 原子替换，断电也不会写坏原文件
         _cache = payload
+        # 记下自己写出来的文件指纹，避免紧接着被 load_if_changed() 当成"外部改动"再读一次盘
+        try:
+            st = os.stat(path)
+            _stat_stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            _stat_stamp = None
+
+
+def load_if_changed() -> dict:
+    """配置文件在磁盘上被改过就重新读盘，否则直接用内存缓存。
+
+    为什么要这个：程序可能同时跑着多个实例，用户也可能按文档手工编辑 config.json。
+    内存缓存只在 save() 时更新，别的进程（或记事本）改了文件本进程是感知不到的——
+    实测后果：在 A 实例把「通知提醒」关掉后，B 实例照旧提醒；手工改配置同样"不生效"。
+    用 mtime + 文件大小做指纹，命中缓存时不额外读文件，开销可忽略。
+    """
+    global _stat_stamp
+    path = paths.config_path()
+    try:
+        st = os.stat(path)
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = None            # 文件被删了：也让 load(force=True) 走一遍（会重建默认配置）
+    if stamp != _stat_stamp:
+        _stat_stamp = stamp
+        return load(force=True)
+    return load()
 
 
 def update(**kwargs) -> dict:

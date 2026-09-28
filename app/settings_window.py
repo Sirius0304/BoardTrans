@@ -406,8 +406,9 @@ class SettingsWindow:
             }
             self._model_status[key] = {"status": "unknown", "percent": 0, "error": ""}
 
-        # 「通知提醒」总开关（默认开）。关掉后所有气泡提醒都不再弹出，
-        # 是否提醒由 app/notify.py 的统一入口判定，这里只负责编辑配置值。
+        # 「通知提醒」总开关（默认开）。关掉后所有气泡提醒都不再弹出。
+        # 注意：这个开关**改动立即生效**（见 _on_notify_change），不参与「保存」批量提交，
+        # 因为"它改了却还继续打扰我"对用户来说等同于开关坏了。
         self._notify_enabled_var = tk.BooleanVar(value=True)
         line = tk.Frame(card, bg=COLOR_CARD)
         line.pack(fill="x", padx=14, pady=(10, 2))
@@ -415,16 +416,30 @@ class SettingsWindow:
                         variable=self._notify_enabled_var,
                         command=self._on_notify_change).pack(side="left")
         tk.Label(card, text="关闭后所有气泡提醒都不再弹出（翻译完成、取词失败、快捷键冲突、"
-                            "模型下载完成/失败、启动提示等），只记日志。默认开启。",
+                            "模型下载完成/失败、启动提示等），只记日志。默认开启；"
+                            "改动立即生效，不需要点「保存」。",
                  bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
                  anchor="w", justify="left", wraplength=520
                  ).pack(fill="x", padx=14, pady=(0, 12))
 
     def _on_notify_change(self) -> None:
-        """用户切换「通知提醒」。保存后立即生效（入口每次都读最新配置）。"""
+        """用户切换「通知提醒」：**立即写盘生效**，不等「保存」。
+
+        为什么不等保存（2026-09-28 实测缺陷）：
+        原来只标记"未保存"，用户取消勾选后往往直接去删除/下载模型（下载按钮就在
+        同一张卡片上），而下载完成的回调会把"未保存"标记清掉并让界面同步回旧值，
+        于是这次关闭凭空消失，用户看到的现象就是"开关关了也照样弹"。
+        这个开关的语义是"别再打扰我"，必须一次点击就生效、且不会被静默回滚。
+        """
         if self._syncing:
             return
-        self._mark_dirty()
+        want = bool(self._notify_enabled_var.get())
+        config.update(notify_enabled=want)
+        self.service.reload_config()
+        # 只把开关这一格写进"已同步快照"，避免整表重载把用户其它未保存的改动冲掉
+        if self._last_config_snapshot:
+            self._last_config_snapshot = tuple(self._last_config_snapshot[:3]) + (want,)
+        log.info("「通知提醒」已切换为%s并立即生效", "开启" if want else "关闭")
 
     def _build_quality_section(self, parent) -> None:
         card = self._card(parent, "翻译档位")
@@ -575,7 +590,8 @@ class SettingsWindow:
         """
         if self._dirty or self._recording:
             return
-        cfg = config.load()
+        # 用 load_if_changed：托盘菜单/其它实例/手工编辑改了配置时也能及时同步到界面
+        cfg = config.load_if_changed()
         snapshot = (cfg.get("hotkey"), cfg.get("quality"),
                     int(cfg.get("idle_unload_minutes", 0) or 0) > 0,
                     bool(cfg.get("notify_enabled", True)))
@@ -926,8 +942,11 @@ class SettingsWindow:
         self._dl_samples.pop(key, None)      # 清掉速度采样，下次下载重新起算
         # 先刷新界面、再通知：提醒会占用窗口线程，先刷新能保证提醒消失后界面立刻是对的
         self._refresh_models()
-        self._dirty = False
-        self._update_dirty_bar()
+        # 注意：这里**不能**清 _dirty。
+        # 2026-09-28 实测缺陷：下载完成时清掉"未保存"标记后，_sync_from_config 会
+        # 立刻把用户刚改、还没保存的控件值同步回旧值（例如刚取消勾选的「通知提醒」
+        # 被静默改回已勾选），用户的修改凭空消失 → "关掉开关照样被提醒"。
+        # _dirty 只应该由 _load_from_config（保存/取消时）清除。
         if ok:
             self.service.preload()      # 下载完顺手把模型读进内存，用户点保存后马上能用
             # 走统一通知入口：开关（「通知提醒」）在入口里判定，同一次事件只提醒一次
@@ -1055,16 +1074,14 @@ class SettingsWindow:
         # 内存优化：勾选=空闲 15 分钟释放，不勾=常驻
         new_idle_minutes = 15 if self._idle_unload_var.get() else 0
         old_idle_minutes = int(cfg.get("idle_unload_minutes", 0) or 0)
-        # 通知提醒总开关
-        new_notify = bool(self._notify_enabled_var.get())
-        old_notify = bool(cfg.get("notify_enabled", True))
 
         hotkey_changed = new_hotkey != cfg.get("hotkey")
         quality_changed = new_quality != cfg.get("quality")
         memory_changed = new_idle_minutes != old_idle_minutes
-        notify_changed = new_notify != old_notify
+        # 「通知提醒」不在保存批量里：它在勾选/取消的那一刻就已经生效落盘
+        # （见 _on_notify_change），避免"改了没保存 → 依然被提醒"的错觉
 
-        if not hotkey_changed and not quality_changed and not memory_changed and not notify_changed:
+        if not hotkey_changed and not quality_changed and not memory_changed:
             self._dirty = False
             self._update_dirty_bar()
             messagebox.showinfo("没有改动", "设置和当前生效的一致，无需保存。", parent=self.root)
@@ -1090,10 +1107,6 @@ class SettingsWindow:
 
         if memory_changed:
             config.update(idle_unload_minutes=new_idle_minutes)
-            self.service.reload_config()
-
-        if notify_changed:
-            config.update(notify_enabled=new_notify)
             self.service.reload_config()
 
         self._pending_quality = new_quality
@@ -1145,6 +1158,11 @@ class SettingsWindow:
             self._notify_enabled_var.set(True)
         finally:
             self._syncing = False
+        # 通知开关是"立即生效"型（不参与保存批量），所以恢复默认值也要立刻落盘
+        config.update(notify_enabled=True)
+        self.service.reload_config()
+        if self._last_config_snapshot:
+            self._last_config_snapshot = tuple(self._last_config_snapshot[:3]) + (True,)
         self._mark_dirty()
         messagebox.showinfo("已恢复默认值", "窗口里的设置已恢复为默认，别忘了点「保存」让它生效。",
                             parent=self.root)

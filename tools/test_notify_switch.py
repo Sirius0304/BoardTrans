@@ -19,6 +19,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -268,7 +269,193 @@ def main():
           "下载失败" not in str(holder.get("status")) and "取消" not in str(holder.get("status")),
           str(holder.get("status")))
 
+    print("\n=== M. 回归：下载完成回调不得吞掉未保存的改动（本次缺陷根因）===")
+    # 场景复刻：用户取消勾选开关（或改了档位）后，没点保存就去下载模型，
+    # 下载完成 → 旧代码会把 _dirty 清掉并让界面同步回旧值，改动凭空消失
+    def edit_then_download():
+        settings._quality_var.set("quality")
+        settings._pending_quality = "quality"
+        settings._mark_dirty()
+        holder["dirty_before"] = settings._dirty
+        settings._on_download_done("zh_en", True, "")
+        holder["dirty_after"] = settings._dirty
+        holder["quality_after"] = settings._quality_var.get()
+
+    config.update(notify_enabled=True)
+    settings._queue.put(("call", edit_then_download))
+    time.sleep(1.6)                      # 留出至少几轮 120ms 的自动同步
+    check("改动前处于「未保存」状态", holder.get("dirty_before") is True, str(holder.get("dirty_before")))
+    check("下载完成后仍是「未保存」（没被静默清掉）", holder.get("dirty_after") is True,
+          str(holder.get("dirty_after")))
+    check("下载完成后未被静默回滚（档位仍是用户改的值）", holder.get("quality_after") == "quality",
+          str(holder.get("quality_after")))
+    # 收尾：把这次未保存的改动丢掉，避免影响后续用例
+    settings._queue.put(("call", lambda: settings._load_from_config(force=True)))
+    time.sleep(0.8)
+
+    print("\n=== N. 点一下开关就生效（不需要点保存），且不会被静默回滚 ===")
+    config.update(notify_enabled=True)
+    notify_mod.reset_dedup()
+    CAPTURED.clear()
+
+    def click_switch_off():
+        settings._notify_enabled_var.set(False)
+        settings._on_notify_change()
+
+    settings._queue.put(("call", click_switch_off))
+    time.sleep(1.5)                      # 等若干轮自动同步
+    check("点一下立即写盘生效", config.load().get("notify_enabled") is False,
+          str(config.load().get("notify_enabled")))
+    check("立即生效：随后通知被拦下", notify_mod.notify("点一下测试", "内容") is False and not CAPTURED,
+          str(CAPTURED))
+    settings._queue.put(("call", grab_var))
+    time.sleep(0.6)
+    check("不会被静默回滚（勾选框仍为未勾选）", holder.get("var") is False, str(holder.get("var")))
+
+    def click_switch_on():
+        settings._notify_enabled_var.set(True)
+        settings._on_notify_change()
+
+    settings._queue.put(("call", click_switch_on))
+    time.sleep(1.2)
+    CAPTURED.clear()
+    check("再点一下立即恢复提醒",
+          notify_mod.notify("点一下测试2", "内容") is True and len(CAPTURED) == 1, str(CAPTURED))
+
+    print("\n=== O. 多实例/手改配置：别的进程改了要立刻生效 ===")
+    # O1: 模拟"另一个实例"（真实子进程）把开关关掉
+    config.update(notify_enabled=True)
+    notify_mod.reset_dedup()
+    CAPTURED.clear()
+    CODE = ("import sys; sys.path.insert(0, sys.argv[1]);"
+            "from app import config; config.update(notify_enabled=False)")
+    probe = subprocess.run([sys.executable, "-c", CODE, PROJECT], capture_output=True, text=True)
+    check("另一个进程写配置成功", probe.returncode == 0, probe.stderr.strip()[-120:])
+    check("本进程立刻跟随（不再用启动时的旧值）", notify_mod.is_enabled() is False,
+          str(notify_mod.is_enabled()))
+    check("本进程的通知确实被拦下",
+          notify_mod.notify("多实例测试", "内容") is False and not CAPTURED, str(CAPTURED))
+
+    # O2: 模拟"用户用记事本手工编辑 config.json"
+    path = paths.config_path()
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    raw["notify_enabled"] = True
+    with open(path, "w", encoding="utf-8") as f:      # 直接覆盖写，模拟手工编辑
+        json.dump(raw, f, ensure_ascii=False, indent=2)
+    check("手工编辑后本进程立刻读到新值", notify_mod.is_enabled() is True,
+          str(notify_mod.is_enabled()))
+    config.update(**{k: original[k] for k in original})   # 还原
+    notify_mod.reset_dedup()
+    CAPTURED.clear()
+
+    print("\n=== P. 首次安装（配置文件不存在，独立数据目录）===")
+    import tempfile
+    fresh = tempfile.mkdtemp(prefix="shunyi_fresh_")
+    env = dict(os.environ)
+    env["SHUNYI_DATA_DIR"] = fresh
+    CODE2 = ("import os, sys; sys.path.insert(0, sys.argv[1]);"
+             "from app import config, notify, paths;"
+             "print('enabled', notify.is_enabled());"
+             "print('created', os.path.exists(paths.config_path()));"
+             "config.update(notify_enabled=False);"
+             "print('after_off', notify.is_enabled())")
+    probe2 = subprocess.run([sys.executable, "-c", CODE2, PROJECT],
+                            capture_output=True, text=True, env=env)
+    out2 = probe2.stdout
+    check("首次安装默认开启提醒（默认值 True）", "enabled True" in out2, out2.strip()[-160:])
+    check("全新数据目录：首次读取即自动创建默认配置", "created True" in out2, out2.strip()[-160:])
+    check("首次安装后关掉开关同样立即生效", "after_off False" in out2, out2.strip()[-160:])
+    shutil.rmtree(fresh, ignore_errors=True)
+
+    print("\n=== Q. 无托盘场景（控制台模式）：仍受开关控制 ===")
+    import io
+    from contextlib import redirect_stdout
+
+    notify_mod.set_sink(None)                    # 等价于阶段一控制台版：没有托盘
+    config.update(notify_enabled=True)
+    notify_mod.reset_dedup()
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        ok_on = notify_mod.notify("控制台模式", "应当打印出来")
+    check("无托盘 + 开关开：回退为控制台输出（不弹任何 UI）",
+          ok_on is True and "控制台模式" in buf.getvalue(), repr(buf.getvalue()[:80]))
+
+    config.update(notify_enabled=False)
+    notify_mod.reset_dedup()
+    buf2 = io.StringIO()
+    with redirect_stdout(buf2):
+        ok_off = notify_mod.notify("控制台模式", "不应输出")
+    check("无托盘 + 开关关：连控制台输出也没有",
+          ok_off is False and buf2.getvalue() == "", repr(buf2.getvalue()))
+    notify_mod.set_sink(fake_sink)
+
+    print("\n=== R. 下载途中切换开关：以通知时刻的开关为准 ===")
+    config.update(notify_enabled=True)
+    notify_mod.reset_dedup()
+    CAPTURED.clear()
+
+    def mid_download_off():
+        settings._on_download_progress("zh_en", 1, 100)      # 下载进行中
+        settings._notify_enabled_var.set(False)
+        settings._on_notify_change()                         # 途中关掉
+        settings._on_download_done("zh_en", True, "")        # 完成
+
+    settings._queue.put(("call", mid_download_off))
+    time.sleep(1.4)
+    check("下载途中关掉开关 → 完成时不弹", not CAPTURED, str(CAPTURED))
+
+    config.update(notify_enabled=False)
+    notify_mod.reset_dedup()
+    CAPTURED.clear()
+
+    def mid_download_on():
+        settings._notify_enabled_var.set(True)
+        settings._on_notify_change()                         # 途中打开
+        settings._on_download_done("en_ja", True, "")
+
+    settings._queue.put(("call", mid_download_on))
+    time.sleep(1.4)
+    check("下载途中打开开关 → 完成时弹一次", len(CAPTURED) == 1, str(CAPTURED))
+
+    print("\n=== S. 依赖模型一并下载：只提醒一次，且不重复 ===")
+    config.update(notify_enabled=True)
+    notify_mod.reset_dedup()
+    CAPTURED.clear()
+
+    def dep_flow():
+        settings._on_dep_start("en_ja", "zh_en")             # 依赖模型开始下载（只改文字）
+        settings._on_download_done("en_ja", True, "")        # 整批完成只推一次
+
+    settings._queue.put(("call", dep_flow))
+    time.sleep(1.4)
+    check("依赖流程只产生 1 条提醒", len(CAPTURED) == 1, str(CAPTURED))
+
+    print("\n=== T. 复刻用户报障流程：点关开关 → 不点保存 → 下载完成 ===")
+    config.update(notify_enabled=True)
+    notify_mod.reset_dedup()
+    CAPTURED.clear()
+    holder.clear()
+
+    def user_flow():
+        settings._notify_enabled_var.set(False)
+        settings._on_notify_change()          # 等价于用户点了一下勾选框（没点「保存」）
+        holder["immediate"] = notify_mod.is_enabled()
+        settings._on_download_done("zh_en", True, "")   # 下载完成（用户没保存就去下载了）
+
+    settings._queue.put(("call", user_flow))
+    time.sleep(2.0)                            # 跨过若干轮自动同步，检验不会被回滚
+    settings._queue.put(("call", grab_var))
+    time.sleep(0.6)
+    check("点关后立即生效（配置已落盘 false）", holder.get("immediate") is False,
+          str(holder.get("immediate")))
+    check("下载完成时零提醒", not CAPTURED, str(CAPTURED))
+    check("勾选框未被静默改回（仍为未勾选）", holder.get("var") is False, str(holder.get("var")))
+    check("配置文件里也是 false（重启后仍关闭）", config.load().get("notify_enabled") is False,
+          str(config.load().get("notify_enabled")))
+
     # 复位
+    config.update(notify_enabled=True)
     settings.shutdown()
     config.update(**{k: original[k] for k in original})
     time.sleep(0.5)
