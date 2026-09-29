@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""设置界面字体统一为黑体：回归测试（递归遍历控件树，逐项核对实际字体）。
+"""设置界面字体**统一且锐利**：回归测试（递归遍历控件树，逐项核对实际字体）。
+
+判定标准（不再写死某个族名）：
+  1) 全界面所有文字元素必须用**同一个族名**（"统一"这个不变量）；
+  2) 该族名必须是锐利候选（雅黑系 / 黑体系），不能退化成 TkDefaultFont 等兜底；
+  3) 该族名与 settings_window.FONT_FAMILY 一致（当前默认：微软雅黑，ClearType 渲染）。
 
 重要（踩过的坑）：设置窗口的 Tk 跑在**独立线程**，tkinter 不是线程安全的 ——
 在其它线程里调 `widget.cget` / `style.lookup` / `font actual` 会得到不可靠结果
@@ -19,7 +24,8 @@ from app import config                        # noqa: E402
 import app.settings_window as sw              # noqa: E402
 from app.service import HotkeyService         # noqa: E402
 
-TARGET = "黑体"
+# 锐利候选（按实测"中间灰阶占比"排序）：雅黑系走 ClearType，黑体系灰度抗锯齿偏软
+CRISP_CANDIDATES = ("Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", "黑体", "SimHei")
 RESULTS = []
 
 NAMED_CUSTOM = ("ShunYiBase", "ShunYiBold", "ShunYiTitle", "ShunYiSmall", "ShunYiMono")
@@ -169,18 +175,31 @@ def main():
     check("设置窗口创建成功", True)
 
     holder = {}
-    settings._queue.put(("call", lambda: holder.update(collect(settings.root))))
+
+    def _collect():
+        data = collect(settings.root)
+        data["runtime_family"] = str(
+            settings.root.tk.call("font", "configure", "ShunYiBase", "-family"))
+        holder.update(data)
+
+    settings._queue.put(("call", _collect))
     time.sleep(1.0)
 
     data = holder
     rows = data.get("rows", [])
+    TARGET = data.get("runtime_family") or ""
+    check("界面字体为锐利候选（非兜底字体）", TARGET in CRISP_CANDIDATES, f"实际={TARGET}")
+    check("界面字体与设定的默认族一致（FONT_FAMILY）", TARGET == sw.FONT_FAMILY,
+          f"实际={TARGET} 期望={sw.FONT_FAMILY}")
     print(f"      ttk 主题: {data.get('theme')}；TButton 样式字体: {data.get('raw_button_font')!r}")
 
     print("\n=== A. 命名字体（自定义 + Tk 内置）===")
     bad = {k: v for k, v in (data.get("custom") or {}).items() if v != TARGET}
-    check("5 个界面命名字体全部为黑体", not bad, str(bad))
+    check("5 个界面命名字体全部为黑体" if TARGET == "黑体" else f"5 个界面命名字体全部为 {TARGET}",
+          not bad, str(bad))
     bad2 = {k: v for k, v in (data.get("tk_named") or {}).items() if v != TARGET}
-    check("9 个 Tk 内置命名字体全部为黑体（未指定字体的控件随之统一）", not bad2, str(bad2))
+    check(f"9 个 Tk 内置命名字体全部为 {TARGET}（未指定字体的控件随之统一）",
+          not bad2, str(bad2))
 
     print("\n=== B. 控件树逐项核对（所有可见文字）===")
     print(f"      共核对 {len(rows)} 个文字控件：")
@@ -188,7 +207,7 @@ def main():
         print(f"        {r['class']:<14} {str(r['family']):<6} {r['text'][:34]}")
 
     bad_rows = [f"{r['class']}({r['text'][:12]})={r['family']}" for r in rows if r["family"] != TARGET]
-    check(f"全部 {len(rows)} 个文字控件的实际字体都是黑体", not bad_rows, str(bad_rows[:8]))
+    check(f"全部 {len(rows)} 个文字控件的实际字体都是 {TARGET}", not bad_rows, str(bad_rows[:8]))
 
     print("\n=== C. 关键文字元素都在核对范围内（防漏项）===")
     texts = [r["text"] for r in rows]
@@ -201,11 +220,11 @@ def main():
     check("输入框内的文字（快捷键值）也被覆盖", bool(entry_rows), str(entry_rows))
 
     print("\n=== D. 样式级字体（按钮/单选/复选/下拉）===")
-    check("TButton 样式字体为黑体（命名族名解析后）", data.get("button_family") == TARGET,
+    check("TButton 样式字体与界面统一（命名族名解析后）", data.get("button_family") == TARGET,
           f"{data.get('raw_button_font')!r} → {data.get('button_family')}")
-    check("TCheckbutton 样式字体为黑体", data.get("checkbutton_family") == TARGET,
+    check("TCheckbutton 样式字体与界面统一", data.get("checkbutton_family") == TARGET,
           str(data.get("checkbutton_family")))
-    check("TCombobox 样式字体为黑体（下拉列表会用它）", data.get("combo_family") == TARGET,
+    check("TCombobox 样式字体与界面统一（下拉列表会用它）", data.get("combo_family") == TARGET,
           str(data.get("combo_family")))
     check("使用的主题支持自定义字体（不是会忽略字体的原生主题）",
           data.get("theme") in ("clam", "default", "alt"), str(data.get("theme")))

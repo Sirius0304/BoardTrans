@@ -220,22 +220,28 @@ class _CanvasBox(tk.Frame):
         self.inner = tk.Frame(self.canvas, bg=fill)
         self._win = self.canvas.create_window(pad, pad, window=self.inner, anchor="nw")
         self._shapes: list = []
+        self._last_key = None          # 上次绘制时的（高, 宽, 底色, 描边）指纹
+        self._stable_checks = 0        # 连续多少次自检没有变化（用于退避）
         self.canvas.bind("<Configure>", self._on_configure)
         self.inner.bind("<Configure>", lambda _e: self._fit_height())
-        # 轻量自检（每 120ms 比一次高度）：
-        # 为什么需要它：Canvas 的窗口项只要完全落在画布可视区之外就不会被映射，
+        # 轻量自检（校准高度）：Canvas 的窗口项只要完全落在画布可视区之外就不会被映射，
         # 也就不会触发 <Configure> —— 若初始高度太小（内容在下面）就会"卡住长不高"，
-        # 卡片整块不可见。这里靠定时自检把高度校准到内容真实高度，
-        # 顺带也能适应动态内容（下载时出现的进度条、变长的提示文字等）。
-        # 每个面板只是一次整数比较，开销可忽略。
+        # 卡片整块不可见。所以需要定时校准；但**只有尺寸/配色真的变了才重画**，
+        # 并在稳定后退避到 1 秒一次（2026-09-29 实测：改前空闲时每秒重画 ~115 次）。
         self.after(60, self._watch)
 
     def _watch(self) -> None:
         try:
             if not self.winfo_exists():
                 return
+            before = self._last_key
             self._fit_height()
-            self.after(120, self._watch)
+            if before == self._last_key:
+                self._stable_checks += 1
+            else:
+                self._stable_checks = 0
+            delay = 250 if self._stable_checks < 4 else 1000
+            self.after(delay, self._watch)
         except Exception:  # noqa: BLE001
             pass
 
@@ -248,13 +254,23 @@ class _CanvasBox(tk.Frame):
         want = self.inner.winfo_reqheight() + 2 * self._pad
         if want < 1:
             return
+        width = self.canvas.winfo_width() or self.canvas.winfo_reqwidth()
+        key = (want, width, self._fill, self._border, self._radius)
+        if key == self._last_key:
+            return                  # 尺寸/配色都没变 → 不重画（省 CPU，避免闪烁）
+        self._last_key = key
         if self.canvas.winfo_reqheight() != want:
             self.canvas.configure(height=want)
         if self._fit_width:
             want_w = self.inner.winfo_reqwidth() + 2 * self._pad
             if want_w > 1 and self.canvas.winfo_reqwidth() != want_w:
                 self.canvas.configure(width=want_w)
-        self._redraw(self.canvas.winfo_width() or self.canvas.winfo_reqwidth(), want)
+        self._redraw(width, want)
+
+    def force_redraw(self) -> None:
+        """内容变化后主动重画一次（例如提示文案变长、状态换色）。"""
+        self._last_key = None
+        self._fit_height()
 
     # ---- 外观
     def set_tone(self, fill: str, border: str = "") -> None:
@@ -468,7 +484,8 @@ class RoundedButton(tk.Canvas):
         w = int(self.winfo_reqwidth())
         h = int(self.winfo_reqheight())
         fill, border, fg = self._colors()
-        self._shapes.extend(draw_round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, self._radius,
+        # 坐标取整数像素：1px 描边落在整像素行/列上才锐利（半像素会让线摊成两层灰）
+        self._shapes.extend(draw_round_rect(self, 1, 1, w - 2, h - 2, self._radius,
                                             fill, border))
         self._shapes.append(self.create_text(w // 2, h // 2, text=self._text, fill=fg,
                                             font=self._font))
@@ -581,14 +598,15 @@ class ToggleSwitch(tk.Canvas):
         self.delete("all")
         on = bool(self._var.get())
         w, h = self._box_w, self._box_h
-        # 胶囊轨道：真圆弧（半径 = 高度的一半）
-        draw_round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, h / 2, self._track_color(on))
+        # 胶囊轨道：真圆弧（半径 = 高度的一半），整像素对齐
+        draw_round_rect(self, 1, 1, w - 2, h - 2, (h - 2) / 2, self._track_color(on))
         # 白色旋钮 + 1px 描边（描边让旋钮边界在浅色轨道上也清楚）
         inset = S(3)
         knob_r = (h - 2 * inset) / 2
-        cx = (w - h / 2) if on else (h / 2)
+        cx = (w - 1 - inset - knob_r) if on else (1 + inset + knob_r)
         cy = h / 2
-        self.create_oval(cx - knob_r, cy - knob_r, cx + knob_r, cy + knob_r,
+        self.create_oval(round(cx - knob_r), round(cy - knob_r),
+                         round(cx + knob_r), round(cy + knob_r),
                          fill="#FFFFFF", outline=self.KNOB_BORDER, width=1)
 
 
@@ -604,7 +622,7 @@ class IconBadge(tk.Canvas):
         super().__init__(parent, width=s, height=s, bg=page_bg,
                          highlightthickness=0, bd=0)
         self._size = s
-        draw_round_rect(self, 0.5, 0.5, s - 0.5, s - 0.5, S(7), tint)
+        draw_round_rect(self, 1, 1, s - 2, s - 2, S(7), tint)
         self._draw_icon(kind, s, color)
 
     def _draw_icon(self, kind: str, s: int, color: str) -> None:
@@ -615,7 +633,7 @@ class IconBadge(tk.Canvas):
         cx = cy = s / 2
 
         def px(v):
-            return round(v * u, 1)
+            return int(round(v * u))       # 整数像素：细线/小图标不糊
 
         if kind == "models":                       # 下载箭头 + 托盘
             self.create_line(cx, cy - px(7), cx, cy + px(2),

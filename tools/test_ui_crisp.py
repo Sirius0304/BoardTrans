@@ -204,6 +204,164 @@ def main():
     check("窗口未超过屏幕（不会跑到屏幕外）", w <= sw_ and h <= sh_,
           f"{w}x{h} vs 屏幕 {sw_}x{sh_}")
 
+    print("\n=== G. 文字锐利度实测（软边比例 + 笔画过渡宽度）===")
+    # 判据（两个互补指标）：
+    #   * 软边比例：深色文字笔画外圈的中间灰阶像素占比 —— 直接对应肉眼的"糊"；
+    #   * 过渡宽度：边缘跨越所需的像素数（1px 锐利 / 2~3px 发虚）。
+    #   实测参考：黑体约 5% 软边（内嵌点阵 + 灰度抗锯齿）；微软雅黑约 0.1~0.2%（ClearType）。
+    try:
+        from PIL import ImageGrab                     # noqa: PLC0415
+        shot = {}
+
+        def _measure_targets():
+            """只取**深色文字**（卡片标题）：灰色说明文字的抗锯齿像素天然落在中间灰阶区间，
+            会把度量污染成假阳性。"""
+            return [(w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height())
+                    for w in settings._title_labels]
+
+        def _raise_window():
+            root_w = settings.root
+            root_w.attributes("-topmost", True)
+            root_w.lift()
+            root_w.focus_force()
+            root_w.update_idletasks()
+            shot["targets"] = _measure_targets()
+            # 窗口尺寸必须在**窗口线程**里取（tkinter 非线程安全）
+            shot["win"] = (root_w.winfo_width(), root_w.winfo_height())
+
+        def _grab_bbox():
+            """只记录窗口位置与尺寸（窗口线程里做，很快）。"""
+            root_w = settings.root
+            x, y = root_w.winfo_rootx(), root_w.winfo_rooty()
+            shot["bbox"] = (x, y, x + root_w.winfo_width(), y + root_w.winfo_height())
+
+        def _soft_ratio(crop):
+            """软边比例：笔画外圈的中间灰阶像素占比（越高越"糊"）。"""
+            px = crop.load()
+            total = mid = 0
+            for j in range(crop.height):
+                for i in range(crop.width):
+                    r, g, b = px[i, j]
+                    total += 1
+                    if max(r, g, b) - min(r, g, b) > 24:      # ClearType 彩色像素
+                        continue
+                    v = (r + g + b) // 3
+                    if 40 < v < 215:
+                        mid += 1
+            return None if total < 150 else mid / total * 100
+
+        def _edge_width(crop):
+            """笔画边缘的过渡宽度中位数（像素）。
+
+            这才是"糊不糊"的正统度量：1px 过渡 = 锐利；2~3px 过渡 = 发虚。
+            注意：黑体走内嵌点阵、过渡会是 0px（锯齿硬边），0px 不代表更清晰，
+            所以本指标只用于**绝对阈值**检查，不用于字体之间的比较。
+            """
+            px = crop.load()
+            lum = [[(px[i, j][0] + px[i, j][1] + px[i, j][2]) / 3
+                    for i in range(crop.width)] for j in range(crop.height)]
+            flat = [v for row in lum for v in row]
+            lo_v, hi_v = min(flat), max(flat)
+            if hi_v - lo_v < 120:
+                return None
+            lo = lo_v + 0.25 * (hi_v - lo_v)
+            hi = lo_v + 0.75 * (hi_v - lo_v)
+            widths = []
+            for j in range(crop.height):
+                row = lum[j]
+                i = 1
+                while i < crop.width - 1:
+                    if row[i - 1] <= lo and hi <= row[i + 1]:
+                        k = i
+                        cnt = 0
+                        while k < crop.width and row[k] < hi:
+                            if row[k] > lo:
+                                cnt += 1
+                            k += 1
+                        widths.append(cnt)
+                        # 关键：保证 i 前进。曾写成 i = k，当 row[i] 本身已达 hi 时
+                        # k == i → 不前进 → 死循环空转（2026-09-29 实测：测试脚本
+                        # 就是这么被卡死、被外部超时杀掉的）
+                        i = k if k > i else i + 1
+                    else:
+                        i += 1
+            if not widths:
+                return None
+            widths.sort()
+            return widths[len(widths) // 2]
+
+        def _metrics_of(image, region_list):
+            out = []
+            for (wx, wy, ww, wh) in region_list:
+                rx, ry = wx - shot["origin"][0], wy - shot["origin"][1]
+                if ww < 30 or wh < 10:
+                    continue
+                # 只测**完全落在窗口可视区**内的文字：滚动到区外的控件坐标会跑到窗口之外，
+                # 截出来的不是文字 → 假数据（2026-09-29 实测踩过）
+                if (rx < 0 or ry < 0
+                        or rx + min(ww, 300) > shot["win"][0]
+                        or ry + wh > shot["win"][1]):
+                    continue
+                crop = image.crop((rx, ry, rx + min(ww, 300), ry + wh)).convert("RGB")
+                flat = [sum(crop.getpixel((i, j))) / 3
+                        for j in range(crop.height) for i in range(crop.width)]
+                if not flat or max(flat) - min(flat) < 120:
+                    continue                  # 对比度不足（无文字/未抓对窗口）
+                out.append((_edge_width(crop), _soft_ratio(crop)))
+            return out
+
+        def _use_family(fam):
+            def _apply():
+                for name in ("ShunYiBase", "ShunYiBold", "ShunYiTitle", "ShunYiSmall"):
+                    settings.root.tk.call("font", "configure", name, "-family", fam)
+                settings.root.update_idletasks()
+            return _apply
+
+        settings._queue.put(("call", _raise_window))
+        time.sleep(1.2)                    # 等窗口真的抬到最前并重绘完
+        settings._queue.put(("call", _grab_bbox))
+        time.sleep(0.8)
+        # 截屏放在**主线程**：ImageGrab 实测 ~127ms，放窗口线程会把界面按住不放
+        #（心跳的慢轮警告日志能证明）。PIL 不碰 Tk，主线程调用安全。
+        img = ImageGrab.grab(bbox=shot["bbox"]) if shot.get("bbox") else None
+        shot["origin"] = (shot["bbox"][0], shot["bbox"][1]) if shot.get("bbox") else (0, 0)
+        m_yahei = _metrics_of(img, shot.get("targets", [])) if img else []
+        if not m_yahei:
+            print("      ⚠ 跳过（截屏不可用或未采到有效文字像素）")
+        else:
+            widths = sorted(w for w, _h in m_yahei if w is not None)
+            halos = sorted(h for _w, h in m_yahei if h is not None)
+            med_w = widths[len(widths) // 2] if widths else 0
+            med_h = halos[len(halos) // 2] if halos else 0.0
+            check(f"文字笔画过渡宽度锐利（中位数 {med_w}px，阈值 ≤ 2px）", med_w <= 2,
+                  f"共 {len(m_yahei)} 处深色文字")
+            # 说明：软边比例**不适合设绝对阈值** —— 粗体 ClearType 文字本身就带大量
+            # 低彩度的过渡像素（实测雅黑粗体 11%，而其 13px 正文只有 0.1%）。
+            # 因此它只用于"同一段文字、换字体"的相对比较（见下面的对照）。
+            print(f"      参考：雅黑粗体标题软边比例 {med_h:.1f}%（仅用于相对比较）")
+            # 对照实验：临时切回黑体，用**软边比例**做相对比较。
+            # 不用"过渡宽度"比较：黑体走内嵌点阵、过渡 0px 属锯齿硬边，不代表更清晰。
+            settings._queue.put(("call", _use_family("黑体")))
+            time.sleep(1.2)
+            settings._queue.put(("call", lambda: shot.update(targets2=_measure_targets())))
+            settings._queue.put(("call", _grab_bbox))
+            time.sleep(1.0)
+            img2 = ImageGrab.grab(bbox=shot["bbox"]) if shot.get("bbox") else None
+            m_hei = _metrics_of(img2, shot.get("targets2") or []) if img2 else []
+            halos_hei = sorted(h for _w, h in m_hei if h is not None)
+            if halos_hei:
+                med_h_hei = halos_hei[len(halos_hei) // 2]
+                check("对照组：雅黑的软边比例不高于黑体（更少「灰晕」）",
+                      med_h <= med_h_hei, f"雅黑 {med_h:.1f}% ≤ 黑体 {med_h_hei:.1f}%")
+            else:
+                print("      ⚠ 对照组跳过（未采到有效像素）")
+            settings._queue.put(("call", _use_family(sw.FONT_FAMILY)))
+            time.sleep(0.8)
+        settings._queue.put(("call", lambda: settings.root.attributes("-topmost", False)))
+    except ImportError:
+        print("      ⚠ 跳过（缺少 Pillow；该检查仅用于开发环境，运行时不依赖）")
+
+
     settings.shutdown()
     time.sleep(0.5)
 

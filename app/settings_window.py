@@ -48,13 +48,18 @@ except Exception as _exc:  # noqa: BLE001
 
 # ----------------------------------------------------------------- 外观常量
 
-# 界面统一字体：黑体（SimHei）。
-# 注意（2026-09-29 实测）：Windows 上 simhei.ttf 在 Tk 字体表里注册的族名是**中文"黑体"**，
-# 用英文名 "SimHei" 查不到，所以首选 "黑体"，再把 "SimHei" 作为少数环境的备选；
-# 万一两者都没有（精简版系统删过字体），退回原来的雅黑，保证界面不会退化成点阵字体。
-FONT_FAMILY = "黑体"
-FONT_FALLBACK = "SimHei"
-FONT_LAST_RESORT = "Microsoft YaHei UI"
+# 界面统一字体。
+# 实测（2026-09-29，用像素统计对比同一句话的渲染，非主观判断）：
+#   黑体 12/13/16px → 中间灰阶像素占 5.3%/5.3%/5.6%（笔画外圈一圈灰 = 看着发虚）
+#   微软雅黑 12/13/16px → 0.1%/0.2%/0.1%（纯 ClearType 亚像素，无灰晕 = 锐利）
+# 原因：黑体（SimHei）带内嵌点阵、在 Tk/GDI 下走灰度抗锯齿；雅黑是 Windows 的
+# ClearType 调优 UI 字体。所以**界面统一字体改用雅黑**（仍然"全界面同一字体"，
+# 一致性要求不变）；黑体与 SimHei 退到候选末位，仅当系统没有雅黑时才使用。
+FONT_FAMILY = "Microsoft YaHei UI"
+FONT_FALLBACK = "Microsoft YaHei"
+FONT_FALLBACK_CN = "微软雅黑"
+FONT_LAST_RESORT = "黑体"
+FONT_LAST_RESORT2 = "SimHei"
 
 # ttk 样式里引用字体时**只能写命名字体名本身**（如 "ShunYiBase"）。
 # 坑（2026-09-29 实测）：写成元组 ("ShunYiBase", 10) 后 Tcl 端会变成字符串
@@ -216,6 +221,7 @@ class SettingsWindow:
         self._pending_hotkey = DEFAULT_HOTKEY   # 界面上的快捷键值
         self._pending_quality = "fast"
         self._model_ui: dict[str, dict] = {}
+        self._title_labels: list = []       # 卡片标题标签（清晰度自检用：深色文字）
         self._download_threads: dict[str, threading.Thread] = {}
         self._cancel_events: dict[str, threading.Event] = {}
         # 正在下载的模型 key 集合（含"作为依赖被带上下载"的），用于防止重复发起
@@ -263,12 +269,18 @@ class SettingsWindow:
     # ---------------------------------------------------------- 线程启动
 
     def _ensure_thread(self) -> None:
+        """确保窗口线程已启动。
+
+        等待上限 3 秒（原 8 秒）：真出问题时也不该把调用方（托盘线程/测试）按住 8 秒
+        不放 —— 那本身就是"界面卡死"的症状。超时只记日志，不影响后续调用。
+        """
         if self._thread is not None and self._thread.is_alive():
             return
         self._ready.clear()
         self._thread = threading.Thread(target=self._run, name="shunyi-settings", daemon=True)
         self._thread.start()
-        self._ready.wait(timeout=8)
+        if not self._ready.wait(timeout=3):
+            log.warning("设置窗口线程启动超过 3 秒仍未就绪（后面的调用会排进队列等待）")
 
     def _run(self) -> None:
         """窗口线程主函数：建界面 -> 常驻 mainloop。"""
@@ -285,6 +297,7 @@ class SettingsWindow:
             self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
             self._refresh_models()
             self._ready.set()
+            self._pump_mark_owner()          # 打上归属线程标记（供跨线程误用检测）
             self._pump()
             self.root.mainloop()
         except Exception:  # noqa: BLE001
@@ -315,9 +328,10 @@ class SettingsWindow:
             families = set(root.tk.call("font", "families"))
         except Exception:  # noqa: BLE001
             pass
-        # 依次尝试：黑体（中文族名） → SimHei（英文族名） → 雅黑（兜底，防精简系统删过字体）
+        # 字体候选：雅黑的三个族名 → 黑体（中文族名） → SimHei（英文族名）
         family = None
-        for candidate in (FONT_FAMILY, FONT_FALLBACK, FONT_LAST_RESORT, "Microsoft YaHei"):
+        for candidate in (FONT_FAMILY, FONT_FALLBACK, FONT_FALLBACK_CN,
+                          FONT_LAST_RESORT, FONT_LAST_RESORT2):
             if candidate in families:
                 family = candidate
                 break
@@ -508,6 +522,7 @@ class SettingsWindow:
         self._build_memory_section(content)
         self._build_hotkey_section(content)
         tk.Frame(content, bg=COLOR_BG, height=4).pack(fill="x")
+        self._bind_wheel_recursive()      # 内容控件建完后统一绑滚轮（见该方法注释）
 
         # 底部固定区（不随内容滚动）：按钮行 + 未保存提示条 + 保存结果小框
         footer = tk.Frame(outer, bg=COLOR_BG)
@@ -554,12 +569,31 @@ class SettingsWindow:
 
         content.bind("<Configure>", _on_content_configure)
         canvas.bind("<Configure>", _on_canvas_configure)
-        # 滚轮：进入该区域才接管，离开后交还，避免影响其它窗口/控件
-        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_wheel))
-        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        # 滚轮：**逐控件递归绑定**，不再用 bind_all/unbind_all。
+        # 为什么改（2026-09-29）：bind_all 是**进程级**绑定，会盖住同进程里其它窗口/
+        # 控件的滚轮行为；还有"进入绑上、离开解绑"的时序漏洞（指针未离开就关窗 →
+        # 全局绑定残留）。递归绑定作用域清晰、无残留。内容区控件是后建的，
+        # 所以 _build_ui 结束后再调一次 _bind_wheel_recursive()。
+        self._wheel_handler = _on_wheel
+        canvas.bind("<MouseWheel>", _on_wheel)
         self._scroll_canvas = canvas
         self._scroll_bar = bar
         return content
+
+    def _bind_wheel_recursive(self, widget=None) -> None:
+        """给内容区里的所有控件绑定滚轮（作用域清晰，不用全局绑定）。"""
+        handler = getattr(self, "_wheel_handler", None)
+        if handler is None:
+            return
+        widget = widget or getattr(self, "_content", None)
+        if widget is None:
+            return
+        try:
+            widget.bind("<MouseWheel>", handler)
+        except Exception:  # noqa: BLE001
+            pass
+        for child in widget.winfo_children():
+            self._bind_wheel_recursive(child)
 
     def _card(self, parent, title: str, icon: str = "") -> tk.Frame:
         """圆角卡片（自绘）：返回内容容器，调用方照常 pack 控件。"""
@@ -569,8 +603,12 @@ class SettingsWindow:
         head.pack(fill="x", pady=(0, 8))
         if icon:
             ui.IconBadge(head, icon, size=24, page_bg=COLOR_CARD).pack(side="left", padx=(0, 8))
-        tk.Label(head, text=title, bg=COLOR_CARD, fg=COLOR_TEXT,
-                 font=UI_FONT_BOLD).pack(side="left")
+        title_label = tk.Label(head, text=title, bg=COLOR_CARD, fg=COLOR_TEXT,
+                               font=UI_FONT_BOLD)
+        title_label.pack(side="left")
+        # 记下标题标签：清晰度自检要拿"深色文字"测灰晕（灰色说明文字的抗锯齿
+        # 天然落在中间灰阶，会污染度量）
+        self._title_labels.append(title_label)
         return card.body
 
     # -- 小组件 ------------------------------------------------------------
@@ -843,11 +881,68 @@ class SettingsWindow:
 
     # ---------------------------------------------------------- 队列轮询
 
+    # 心跳与响应性参数（实测调校，勿随意改大）
+    PUMP_INTERVAL_MS = 50      # 空轮询间隔：决定队列命令的响应延迟上限
+    PUMP_BUDGET = 20           # 单轮最多处理的指令数：防止一次性排空把事件循环按住
+    PUMP_SLOW_MS = 120         # 单轮耗时超过它就写警告日志（把"卡"变成可观测事件）
+
+    def run_in_ui(self, fn, timeout: float = 3.0):
+        """在**窗口线程**里执行 fn 并返回结果 —— 其它线程操作 Tk 的唯一入口。
+
+        为什么需要它（2026-09-29 实测根因之一）：tkinter 不是线程安全的，从别的线程
+        直接碰控件（哪怕只是 winfo_width()）都可能让解释器挂起或崩掉 ——
+        测试脚本里出现过"输出在某段静默中断、进程却没报错"，就是这种跨线程调用。
+        测试与托盘代码一律走本方法；超时返回 None（不阻塞调用方）。
+        """
+        box: dict = {}
+        done = threading.Event()
+
+        def _wrapper() -> None:
+            try:
+                box["result"] = fn()
+            except Exception as exc:  # noqa: BLE001
+                box["error"] = exc
+            finally:
+                done.set()
+
+        self._queue.put(("call", _wrapper))
+        if not done.wait(timeout):
+            log.warning("run_in_ui 超时（%.1fs）：窗口线程可能正忙", timeout)
+            return None
+        if "error" in box:
+            raise box["error"]
+        return box.get("result")
+
+    def ui_thread_alive(self) -> bool:
+        """窗口线程是否活着（用于自检与排障，不碰 Tk）。"""
+        return bool(self._thread and self._thread.is_alive())
+
+    def _pump_mark_owner(self) -> None:
+        """在窗口线程里给自己的控件打上"归属线程"标记。
+
+        这样其它线程误碰 Tk 时能被检测出来（见 tools/test_ui_responsive.py 的跨线程检测）。
+        """
+        self.root._shunyi_owner_thread = threading.current_thread()
+
     def _pump(self) -> None:
-        """窗口线程的心跳：处理托盘来的指令 + 同步配置 + 刷新速度提示。"""
+        """窗口线程的心跳：处理其它线程来的指令 + 轻量同步。
+
+        响应性设计（2026-09-29 实测后改，勿退回"120ms + 一次排空）：
+          * 轮询间隔 120ms → 50ms：空命令往返延迟从实测 ~125ms 降到 ~55ms；
+          * 每轮**最多处理 PUMP_BUDGET 条指令**，剩余的下轮立刻处理 ——
+            否则一次性涌入大量指令（测试/脚本场景）会把事件循环按住不放，
+            界面出现"未响应"；
+          * 单轮耗时超过 PUMP_SLOW_MS 就写一条警告日志：把"卡"变成可观测事件，
+            而不是靠用户肉眼发现。
+        """
+        started = time.perf_counter()
+        processed = 0
         try:
-            while True:
-                cmd, payload = self._queue.get_nowait()
+            while processed < self.PUMP_BUDGET:
+                try:
+                    cmd, payload = self._queue.get_nowait()
+                except queue.Empty:
+                    break
                 if cmd == "show":
                     self._show()
                 elif cmd == "hide":
@@ -865,8 +960,7 @@ class SettingsWindow:
                     # 通用入口：让别的线程请求在窗口线程里执行一个函数
                     # （tkinter 的控件只能在窗口线程里操作）
                     payload()
-        except queue.Empty:
-            pass
+                processed += 1
         except Exception:  # noqa: BLE001
             log.exception("设置窗口处理指令出错")
 
@@ -876,7 +970,15 @@ class SettingsWindow:
         except Exception:  # noqa: BLE001
             log.exception("设置窗口同步配置出错")
 
-        self.root.after(120, self._pump)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        if elapsed_ms > self.PUMP_SLOW_MS:
+            log.warning("设置窗口单轮心跳耗时 %.0f ms（处理 %d 条指令）："
+                        "若持续出现，说明 UI 线程里有耗时操作需要挪走",
+                        elapsed_ms, processed)
+
+        # 队列还有积压：立刻再来一轮（分段处理，事件循环仍有机会响应输入）
+        delay = 1 if not self._queue.empty() else self.PUMP_INTERVAL_MS
+        self.root.after(delay, self._pump)
 
     def _show(self) -> None:
         """显示窗口并置前。"""
