@@ -84,6 +84,11 @@ QUALITY_INFO = [
     ("quality", "高质量", "更准确，适合邮件、文档等正式内容"),
 ]
 
+LANG_INFO = [
+    ("en", "英文", "中文 → 英文（只需 1 个模型，约 71 MB）"),
+    ("ja", "日文", "中文 → 日文（经英文中转，需要 2 个模型，约 186 MB）"),
+]
+
 DEFAULT_HOTKEY = "alt+j"
 
 # tkinter 事件里的修饰键位掩码
@@ -357,6 +362,7 @@ class SettingsWindow:
 
         # 三个区块
         self._build_models_section(outer)
+        self._build_language_section(outer)
         self._build_quality_section(outer)
         self._build_memory_section(outer)
         self._build_hotkey_section(outer)
@@ -453,8 +459,30 @@ class SettingsWindow:
         self.service.reload_config()
         # 只把开关这一格写进"已同步快照"，避免整表重载把用户其它未保存的改动冲掉
         if self._last_config_snapshot:
-            self._last_config_snapshot = tuple(self._last_config_snapshot[:3]) + (want,)
+            self._last_config_snapshot = tuple(self._last_config_snapshot[:-1]) + (want,)
         log.info("「通知提醒」已切换为%s并立即生效", "开启" if want else "关闭")
+
+    def _build_language_section(self, parent) -> None:
+        """目标语言（此前只能从托盘菜单改，窗口里看不到当前值——2026-09-29 补上）。"""
+        card = self._card(parent, "目标语言")
+        self._lang_var = tk.StringVar(value="en")
+        for value, title, desc in LANG_INFO:
+            line = tk.Frame(card, bg=COLOR_CARD)
+            line.pack(fill="x", padx=14, pady=3)
+            rb = ttk.Radiobutton(line, text=title, value=value, variable=self._lang_var,
+                                 command=self._on_lang_change)
+            rb.pack(side="left")
+            tk.Label(line, text=f"　{desc}", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+                     font="ShunYiSmall").pack(side="left")
+        tk.Label(card, text="与托盘菜单里的「目标语言」是同一项，两边任改一处即可，显示会自动保持一致。",
+                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
+                 anchor="w", justify="left", wraplength=560).pack(fill="x", padx=14, pady=(4, 12))
+
+    def _on_lang_change(self) -> None:
+        """用户点了「英文 / 日文」单选。"""
+        if self._syncing:
+            return
+        self._mark_dirty()
 
     def _build_quality_section(self, parent) -> None:
         card = self._card(parent, "翻译档位")
@@ -581,7 +609,7 @@ class SettingsWindow:
     def _load_from_config(self, force: bool = False) -> None:
         """把配置值填进界面控件（程序化刷新，不标记为"用户修改"）。"""
         cfg = config.load(force=force)
-        self._last_config_snapshot = (cfg.get("hotkey"), cfg.get("quality"),
+        self._last_config_snapshot = (cfg.get("hotkey"), cfg.get("quality"), cfg.get("target_lang"),
                                       int(cfg.get("idle_unload_minutes", 0) or 0) > 0,
                                       bool(cfg.get("notify_enabled", True)))
         self._syncing = True
@@ -593,6 +621,7 @@ class SettingsWindow:
             self._hotkey_entry.insert(0, format_hotkey(self._pending_hotkey))
             self._hotkey_entry.configure(state="readonly")
             self._quality_var.set(self._pending_quality)
+            self._lang_var.set(str(cfg.get("target_lang") or "en"))
             self._idle_unload_var.set(int(cfg.get("idle_unload_minutes", 0) or 0) > 0)
             self._notify_enabled_var.set(bool(cfg.get("notify_enabled", True)))
             self._dirty = False
@@ -609,7 +638,7 @@ class SettingsWindow:
             return
         # 用 load_if_changed：托盘菜单/其它实例/手工编辑改了配置时也能及时同步到界面
         cfg = config.load_if_changed()
-        snapshot = (cfg.get("hotkey"), cfg.get("quality"),
+        snapshot = (cfg.get("hotkey"), cfg.get("quality"), cfg.get("target_lang"),
                     int(cfg.get("idle_unload_minutes", 0) or 0) > 0,
                     bool(cfg.get("notify_enabled", True)))
         if snapshot == self._last_config_snapshot:
@@ -618,16 +647,18 @@ class SettingsWindow:
         self._refresh_models()
 
     def _pending_values(self) -> tuple:
-        """界面上待保存的三项设置（快捷键 / 档位 / 内存优化的分钟数）。"""
+        """界面上的待保存设置（快捷键 / 档位 / 目标语言 / 内存优化的分钟数）。"""
         return (str(self._pending_hotkey or DEFAULT_HOTKEY),
                 str(self._quality_var.get() or "fast"),
+                str(self._lang_var.get() or "en"),
                 15 if self._idle_unload_var.get() else 0)
 
     def _saved_values(self) -> tuple:
-        """配置文件里当前真正生效的三项设置。"""
+        """配置文件里当前真正生效的对应设置。"""
         cfg = config.load()
         return (str(cfg.get("hotkey") or DEFAULT_HOTKEY),
                 str(cfg.get("quality") or "fast"),
+                str(cfg.get("target_lang") or "en"),
                 int(cfg.get("idle_unload_minutes", 0) or 0))
 
     def _values_changed(self) -> bool:
@@ -671,8 +702,9 @@ class SettingsWindow:
         if self._dirty:
             cfg = config.load()
             live_q = {"fast": "高速度", "quality": "高质量"}.get(cfg.get("quality"), cfg.get("quality"))
+            live_lang = {"en": "英文", "ja": "日文"}.get(cfg.get("target_lang"), cfg.get("target_lang"))
             text = (f"有未保存的修改。当前实际生效的是：快捷键 {format_hotkey(cfg.get('hotkey'))}"
-                    f"、档位 {live_q}。点「保存」后生效。")
+                    f"、档位 {live_q}、目标语言 {live_lang}。点「保存」后生效。")
             self._dirty_label.configure(text=text)
             if not self._dirty_bar.winfo_manager():
                 # side="bottom"：footer 先占最底部，这条随后占它上方
@@ -1184,17 +1216,19 @@ class SettingsWindow:
         new_hotkey = self._pending_hotkey
         # 档位以界面控件当前值为准（用户可能刚点过单选按钮）
         new_quality = self._quality_var.get()
+        new_lang = str(self._lang_var.get() or "en")
         # 内存优化：勾选=空闲 15 分钟释放，不勾=常驻
         new_idle_minutes = 15 if self._idle_unload_var.get() else 0
         old_idle_minutes = int(cfg.get("idle_unload_minutes", 0) or 0)
 
         hotkey_changed = new_hotkey != cfg.get("hotkey")
         quality_changed = new_quality != cfg.get("quality")
+        lang_changed = new_lang != cfg.get("target_lang")
         memory_changed = new_idle_minutes != old_idle_minutes
         # 「通知提醒」不在保存批量里：它在勾选/取消的那一刻就已经生效落盘
         # （见 _on_notify_change），避免"改了没保存 → 依然被提醒"的错觉
 
-        if not hotkey_changed and not quality_changed and not memory_changed:
+        if not hotkey_changed and not quality_changed and not lang_changed and not memory_changed:
             self._dirty = False
             self._update_dirty_bar()
             self._show_notice("设置和当前生效的一致，无需保存。", "info")
@@ -1216,6 +1250,10 @@ class SettingsWindow:
             config.update(quality=new_quality)
             self.service.reload_config()
 
+        if lang_changed:
+            config.update(target_lang=new_lang)
+            self.service.reload_config()
+
         if memory_changed:
             config.update(idle_unload_minutes=new_idle_minutes)
             self.service.reload_config()
@@ -1223,10 +1261,22 @@ class SettingsWindow:
         self._pending_quality = new_quality
         self._load_from_config(force=True)
 
+        # 切到日文但模型还没下载：如实提醒（引导去上方卡片下载，而不是等翻译时才发现）。
+        # 注意这里配置已经保存成功了，只是提醒缺模型，不算保存失败。
+        if lang_changed and models.missing_for_target(new_lang):
+            names = "、".join(models.PACKAGES[k]["display"]
+                              for k in models.missing_for_target(new_lang))
+            self._show_notice(f"目标语言已保存为{'日文' if new_lang == 'ja' else '英文'}，"
+                              f"但还缺少模型：{names}。请在上方「翻译模型」卡片点「下载」。",
+                              "err")
+            return
+
         tip = "设置已保存并立即生效，无需重启软件。"
         if hotkey_changed:
             tip += ("\n提示：新快捷键已经生效。如果按下去没反应，说明这个组合被别的软件抢占了"
                     "（这类冲突无法自动检测），换一个组合重新设置即可。")
+        if lang_changed:
+            tip += "\n目标语言已切换为" + ("日文" if new_lang == "ja" else "英文") + "。"
         if memory_changed:
             tip += ("\n内存优化已" + ("开启：挂机超过 15 分钟会自动释放模型内存。"
                                       if new_idle_minutes else "关闭：模型会一直留在内存里，翻译始终最快。"))
@@ -1251,7 +1301,7 @@ class SettingsWindow:
     def _on_restore_defaults(self) -> None:
         if not messagebox.askokcancel(
                 "恢复默认设置",
-                "将把快捷键恢复为 Alt+J、翻译档位恢复为「高速度」。\n\n"
+                "将把快捷键恢复为 Alt+J、翻译档位恢复为「高速度」、目标语言恢复为「英文」。\n\n"
                 "注意：这只会改回窗口里的值，点「保存」后才真正生效。",
                 icon="warning", parent=self.root):
             return
@@ -1266,6 +1316,7 @@ class SettingsWindow:
             self._hotkey_entry.insert(0, format_hotkey(DEFAULT_HOTKEY))
             self._hotkey_entry.configure(state="readonly")
             self._quality_var.set("fast")
+            self._lang_var.set("en")
             self._idle_unload_var.set(True)
             self._notify_enabled_var.set(True)
         finally:

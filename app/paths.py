@@ -29,6 +29,13 @@ APP_NAME_CN = "瞬译"
 _data_dir_cache: str | None = None
 _sub_dir_cache: dict[str, str] = {}
 _models_root_cache: str | None = None
+# 缓存对应的"来源值"（环境变量 + 配置项 models_root）。
+# 为什么要有它（2026-09-29 修复）：models_root() 的探测结果被缓存后永不失效，
+# 而全项目没有任何地方调用 reset_models_root_cache() —— 于是运行中改了配置
+# （设置界面保存 / 手工编辑 config.json / 另一实例写入）都不会生效，必须重启。
+# 现在把缓存和"来源值"绑定：来源变了就重新探测，没变就继续用缓存（探测要写
+# 文件探针，很慢，不能每次都跑）。
+_models_root_key: tuple[str, str] | None = None
 
 
 def is_ascii(text: str) -> bool:
@@ -127,10 +134,14 @@ def default_models_root() -> str:
 
 
 def _configured_models_root() -> str:
-    """读配置里用户自定义的模型目录（延迟导入 config，避免循环依赖）。"""
+    """读配置里用户自定义的模型目录（延迟导入 config，避免循环依赖）。
+
+    用 load_if_changed：手工编辑 config.json、或另一个实例改了配置，
+    这里都能立刻拿到新值（内部有 mtime+大小指纹，没变时不会真读文件）。
+    """
     try:
         from . import config
-        return str(config.load().get("models_root") or "")
+        return str(config.load_if_changed().get("models_root") or "")
     except Exception:  # noqa: BLE001
         return ""
 
@@ -147,26 +158,38 @@ def models_root() -> str:
     重要：前三个候选只要不满足"纯 ASCII + 可写"就会被跳过。
     也就是说，如果软件放在含中文的路径下（如 F:\\瞬译\\），
     模型会自动回退到数据目录，而不是错误地放到读不了的地方。
+
+    缓存策略：结果与"来源值"（环境变量 + 配置项）绑定 —— 来源没变就用缓存
+    （探测要写文件探针，不能每次跑）；来源变了（含手工编辑 config.json、
+    其它实例写入）就自动重新探测，无需重启、也无需谁记得调用 reset。
     """
-    global _models_root_cache
-    if _models_root_cache is not None:
+    global _models_root_cache, _models_root_key
+    env_val = os.environ.get("SHUNYI_MODELS_DIR") or ""
+    cfg_val = _configured_models_root()
+    key = (env_val, cfg_val)
+    if _models_root_cache is not None and key == _models_root_key:
         return _models_root_cache
 
-    for candidate in (os.environ.get("SHUNYI_MODELS_DIR"),
-                      _configured_models_root(),
-                      default_models_root()):
+    # 来源变了（或首次调用）：清掉旧的 models:* 子目录缓存再重新探测
+    for name in [k for k in _sub_dir_cache if k.startswith("models:")]:
+        _sub_dir_cache.pop(name, None)
+
+    for candidate in (env_val, cfg_val, default_models_root()):
         if _is_usable_dir(candidate):
             _models_root_cache = candidate
+            _models_root_key = key
             return candidate
 
     _models_root_cache = data_dir()
+    _models_root_key = key
     return _models_root_cache
 
 
 def reset_models_root_cache() -> None:
-    """配置里改了模型目录后调用，让下次重新探测（下次取路径时生效）。"""
-    global _models_root_cache
+    """强制清掉模型目录缓存（下次取路径时重新探测）。测试用；正常运行不需要。"""
+    global _models_root_cache, _models_root_key
     _models_root_cache = None
+    _models_root_key = None
     _sub_dir_cache.clear()
 
 
