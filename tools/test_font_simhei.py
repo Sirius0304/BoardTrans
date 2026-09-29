@@ -90,6 +90,26 @@ def collect(root):
     rows = []
     for w in walk(root):
         cls = w.winfo_class()
+        if cls == "Canvas":
+            # 自绘控件（圆角按钮 / 分段选项 / 胶囊 / 图标）的文字是 Canvas 文本项，
+            # 也必须逐项核对字体，否则"按钮文字"这一块就成了验证盲区。
+            try:
+                items = w.find_all()
+            except Exception:  # noqa: BLE001
+                items = []
+            for item in items:
+                try:
+                    if w.type(item) != "text":
+                        continue
+                    txt = str(w.itemcget(item, "text") or "").strip()
+                    if not txt:
+                        continue
+                    spec = w.itemcget(item, "font")
+                except Exception:  # noqa: BLE001
+                    continue
+                rows.append({"class": "Canvas", "text": txt,
+                             "family": fam_of(spec) or fam_of("TkDefaultFont")})
+            continue
         if cls not in TEXT_CLASSES:
             continue
         text = text_of(w)

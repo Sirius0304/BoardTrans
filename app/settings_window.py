@@ -31,15 +31,18 @@ log = get_logger()
 
 # tkinter 是标准库，但部分精简版 Python 不带它。
 # 这里做兜底：导入失败时程序照常运行，只是点「设置」时给出友好提示而不是崩溃。
+# ui_kit（自绘圆角卡片/按钮/开关的视觉套件）同样依赖 tkinter，一起放在兜底里。
 try:
     import tkinter as tk
     from tkinter import messagebox, ttk
+    from . import ui_kit as ui
     TK_AVAILABLE = True
     TK_IMPORT_ERROR = ""
 except Exception as _exc:  # noqa: BLE001
     tk = None
     messagebox = None
     ttk = None
+    ui = None
     TK_AVAILABLE = False
     TK_IMPORT_ERROR = str(_exc)
 
@@ -60,19 +63,25 @@ FONT_LAST_RESORT = "Microsoft YaHei UI"
 # font="ShunYiBold" 的「保存」按钮却是黑体。用命名字体名即可正常解析。
 UI_FONT = "ShunYiBase"
 UI_FONT_BOLD = "ShunYiBold"
-COLOR_BG = "#F5F6F8"
-COLOR_CARD = "#FFFFFF"
-COLOR_TEXT = "#1F2329"
-COLOR_SUBTEXT = "#6B7280"
-COLOR_PRIMARY = "#2E6BE6"
-COLOR_WARN_BG = "#FFF6E5"
-COLOR_WARN_FG = "#9A6700"
-COLOR_OK = "#1A7F37"
-COLOR_ERR = "#C62828"
+
+# ----------------------------------------------------------------- 外观常量
+# 统一走 ui_kit 的设计令牌（参考图配色：近白页面 + 白卡片 + 浅灰描边 + 蓝色主色）。
+# 这套常量只在 tkinter 可用时才会被用到；tkinter 缺失时窗口根本不会创建，
+# 所以这里给 ui 加一层兜底字面量即可，避免"字体/颜色常量缺失"引发二次报错。
+COLOR_BG = ui.COLOR_PAGE if ui else "#F7F8FA"
+COLOR_CARD = ui.COLOR_CARD if ui else "#FFFFFF"
+COLOR_BORDER = ui.COLOR_BORDER if ui else "#E5E7EB"
+COLOR_TEXT = ui.COLOR_TEXT if ui else "#1F2937"
+COLOR_SUBTEXT = ui.COLOR_SUBTEXT if ui else "#6B7280"
+COLOR_PRIMARY = ui.COLOR_PRIMARY if ui else "#3B82F6"
+COLOR_WARN_BG = ui.COLOR_WARN_BG if ui else "#FFF7ED"
+COLOR_WARN_FG = ui.COLOR_WARN_FG if ui else "#C2410C"
+COLOR_OK = ui.COLOR_OK if ui else "#16A34A"
+COLOR_ERR = ui.COLOR_ERR if ui else "#DC2626"
 # 窗口内轻量提醒条（保存结果提示）的底色，配合上面的前景色使用
-COLOR_OK_BG = "#E8F5EC"
-COLOR_INFO_BG = "#EDF3FE"
-COLOR_ERR_BG = "#FDECEC"
+COLOR_OK_BG = ui.COLOR_OK_SOFT if ui else "#ECFDF5"
+COLOR_INFO_BG = ui.COLOR_PRIMARY_SOFT if ui else "#EFF6FF"
+COLOR_ERR_BG = ui.COLOR_ERR_SOFT if ui else "#FEF2F2"
 
 # 界面上的模型卡片定义（key 对应 app/models.py 的注册表）
 MODEL_CARDS = [
@@ -344,54 +353,57 @@ class SettingsWindow:
                 continue
         log.info("设置窗口 ttk 主题: %s（字体: %s）", theme_used or "默认", family)
 
-        # 先给所有 ttk 控件兜底，再逐个把常用控件的字体钉死（有些控件从控件级选项取字体）
-        style.configure(".", font=UI_FONT if family else None, background=COLOR_BG)
-        for cls in ("TLabel", "TLabelframe", "TLabelframe.Label", "TNotebook.Tab", "TScale",
-                    "TMenubutton"):
-            try:
-                style.configure(cls, font=UI_FONT)
-            except Exception:  # noqa: BLE001
-                pass
+        # 先给所有 ttk 控件兜底字体；按钮/开关/分段选择器已改用 ui_kit 自绘控件，
+        # 这里保留的 ttk 样式主要服务：输入框、进度条、滚动条、下拉框（防将来新增）。
+        style.configure(".", font=UI_FONT, background=COLOR_BG, foreground=COLOR_TEXT)
 
-        # 普通按钮：白底 + 细边框，贴合卡片风格
+        # 次要按钮（白底 + 浅灰描边，悬停/按下/禁用三态）
         style.configure("TButton", font=UI_FONT, padding=(10, 5),
-                        background="#FFFFFF", foreground=COLOR_TEXT,
-                        bordercolor="#D9DDE3", lightcolor="#FFFFFF", darkcolor="#FFFFFF",
-                        focuscolor="#D9DDE3")
+                        background=COLOR_CARD, foreground=COLOR_TEXT,
+                        bordercolor=ui.COLOR_BORDER_STRONG, lightcolor=COLOR_CARD,
+                        darkcolor=COLOR_CARD, focuscolor=ui.COLOR_BORDER)
         style.map("TButton",
-                  background=[("pressed", "#E6E9EE"), ("active", "#F2F4F7"), ("disabled", "#F5F6F8")],
-                  foreground=[("disabled", COLOR_SUBTEXT)])
+                  background=[("pressed", "#E8EAEE"), ("active", ui.COLOR_HOVER),
+                              ("disabled", ui.COLOR_HOVER)],
+                  foreground=[("disabled", ui.COLOR_MUTED)])
 
-        # 主按钮（保存）：蓝色实心
-        style.configure("Big.TButton", font="ShunYiBold", padding=(16, 6),
+        # 主按钮（蓝底白字；保留给可能用 ttk 的地方，自绘版见 ui_kit.RoundedButton）
+        style.configure("Big.TButton", font=UI_FONT_BOLD, padding=(14, 6),
                         background=COLOR_PRIMARY, foreground="#FFFFFF",
-                        bordercolor=COLOR_PRIMARY, lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY)
+                        bordercolor=COLOR_PRIMARY, lightcolor=COLOR_PRIMARY,
+                        darkcolor=COLOR_PRIMARY)
         style.map("Big.TButton",
-                  background=[("pressed", "#1F4CA8"), ("active", "#2559C4"), ("disabled", "#A9BFF0")],
-                  foreground=[("disabled", "#F0F4FF")])
+                  background=[("pressed", ui.COLOR_PRIMARY_PRESSED),
+                              ("active", ui.COLOR_PRIMARY_HOVER),
+                              ("disabled", "#A9C4F2")],
+                  foreground=[("disabled", "#F2F6FF")])
 
-        # 单选 / 复选：卡片内是白底，必须显式设置背景，否则会出现灰色块
-        for cls in ("TCheckbutton", "TRadiobutton"):
-            style.configure(cls, font=UI_FONT, background=COLOR_CARD,
-                            foreground=COLOR_TEXT, indicatorcolor="#FFFFFF",
-                            bordercolor="#C9CED6", focuscolor=COLOR_CARD)
-            style.map(cls,
-                      background=[("active", COLOR_CARD), ("disabled", COLOR_CARD)],
-                      foreground=[("disabled", COLOR_SUBTEXT)],
-                      indicatorcolor=[("selected", COLOR_PRIMARY)])
+        # 输入框 / 下拉框（白底 + 浅灰描边，聚焦主色描边）
+        for cls in ("TEntry", "TCombobox"):
+            style.configure(cls, font=UI_FONT, fieldbackground=COLOR_CARD,
+                            background=COLOR_CARD, foreground=COLOR_TEXT,
+                            bordercolor=ui.COLOR_BORDER_STRONG, lightcolor=COLOR_CARD,
+                            darkcolor=COLOR_CARD, arrowcolor=COLOR_SUBTEXT, padding=4)
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", COLOR_CARD)],
+                  bordercolor=[("focus", COLOR_PRIMARY)],
+                  foreground=[("disabled", ui.COLOR_MUTED)])
 
-        # 下拉框 / 输入框（本窗口暂无下拉框，为将来新增保持一致）
-        style.configure("TCombobox", font=UI_FONT, fieldbackground="#FFFFFF",
-                        background="#FFFFFF", foreground=COLOR_TEXT, arrowcolor=COLOR_TEXT,
-                        bordercolor="#D9DDE3", lightcolor="#FFFFFF", darkcolor="#FFFFFF")
-        style.map("TCombobox", fieldbackground=[("readonly", "#FFFFFF")],
-                  foreground=[("disabled", COLOR_SUBTEXT)])
-        style.configure("TEntry", font=UI_FONT, fieldbackground="#FFFFFF",
-                        foreground=COLOR_TEXT, bordercolor="#D9DDE3")
+        # 进度条：细、主色（参考图里的细进度条）
+        style.configure("Thin.Horizontal.TProgressbar", thickness=6,
+                        background=COLOR_PRIMARY, troughcolor="#EDF0F4",
+                        bordercolor="#EDF0F4", lightcolor=COLOR_PRIMARY,
+                        darkcolor=COLOR_PRIMARY)
 
-        # 进度条：与主色一致，槽底浅灰，避免 clam 默认的绿色
-        style.configure("TProgressbar", background=COLOR_PRIMARY, troughcolor="#E6E9EE",
-                        bordercolor="#E6E9EE", lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY)
+        # 滚动条：细、无箭头（窗口较小时内容区可滚动，见 _build_scroll_area）
+        style.configure("Thin.Vertical.TScrollbar", width=8, arrowsize=0,
+                        background="#D6DAE0", troughcolor=COLOR_BG,
+                        bordercolor=COLOR_BG, lightcolor="#D6DAE0", darkcolor="#D6DAE0",
+                        relief="flat")
+        style.map("Thin.Vertical.TScrollbar",
+                  background=[("active", "#BFC5CE"), ("pressed", "#AAB1BC")])
+
+        # 兼容历史样式名（卡片标题/说明在旧代码里可能引用到）
         style.configure("Card.TFrame", background=COLOR_CARD, relief="flat")
         style.configure("CardTitle.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT, font="ShunYiTitle")
         style.configure("CardText.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT)
@@ -399,8 +411,6 @@ class SettingsWindow:
         style.configure("CardOk.TLabel", background=COLOR_CARD, foreground=COLOR_OK, font="ShunYiBold")
         style.configure("CardErr.TLabel", background=COLOR_CARD, foreground=COLOR_ERR, font="ShunYiBold")
         style.configure("Hint.TLabel", background=COLOR_BG, foreground=COLOR_SUBTEXT, font="ShunYiSmall")
-        style.configure("Warn.TFrame", background=COLOR_WARN_BG)
-        style.configure("Warn.TLabel", background=COLOR_WARN_BG, foreground=COLOR_WARN_FG, font="ShunYiBold")
         style.configure("Big.TButton", font="ShunYiBold", padding=(16, 6))
         style.configure("TButton", padding=(10, 5))
 
@@ -416,93 +426,255 @@ class SettingsWindow:
 
     def _build_ui(self) -> None:
         root = self.root
-        root.minsize(640, 700)
+        root.configure(bg=COLOR_BG)
+
+        # 窗口尺寸：按屏幕大小自适应并整体调小（紧凑），并居中显示。
+        # 尺寸按 DPI 缩放系数放大，保证高分屏上物理观感一致；下限保证控件可读可用。
+        try:
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+            dpi = root.winfo_fpixels("1i") or 96.0
+            k = max(1.0, dpi / 96.0)
+            w = int(min(max(sw * 0.30, 470 * k), 540 * k))
+            h = int(min(max(sh * 0.68, 480 * k), 720 * k))
+            x = int(max(0, (sw - w) / 2))
+            y = int(max(0, (sh - h) / 2 - 30 * k))
+            root.geometry(f"{w}x{h}+{x}+{y}")
+            root.minsize(int(430 * k), int(380 * k))     # 允许缩到更小，内容区自动出现滚动条
+        except Exception:  # noqa: BLE001
+            root.minsize(430, 380)
 
         outer = tk.Frame(root, bg=COLOR_BG)
         outer.pack(fill="both", expand=True, padx=0, pady=0)
 
-        # 标题
+        # 顶部标题（紧凑：标题 + 一行说明）
         header = tk.Frame(outer, bg=COLOR_BG)
-        header.pack(fill="x", padx=18, pady=(16, 8))
-        tk.Label(header, text="瞬译 设置", bg=COLOR_BG, fg=COLOR_TEXT, font="ShunYiTitle").pack(anchor="w")
-        tk.Label(header, text="在这里管理翻译模型、翻译档位和快捷键；点「保存」后立即生效。",
+        header.pack(fill="x", padx=14, pady=(12, 10))
+        tk.Label(header, text="瞬译 设置", bg=COLOR_BG, fg=COLOR_TEXT,
+                 font=UI_FONT_BOLD).pack(anchor="w")
+        tk.Label(header, text="管理翻译模型、目标语言、档位与快捷键；点「保存」后立即生效。",
                  bg=COLOR_BG, fg=COLOR_SUBTEXT, font="ShunYiSmall").pack(anchor="w", pady=(2, 0))
 
         # 未保存提示条（常驻型，贴在窗口底部、按钮行上方；见 _update_dirty_bar）
-        self._dirty_bar = tk.Frame(outer, bg=COLOR_WARN_BG)
-        self._dirty_label = tk.Label(self._dirty_bar, text="", bg=COLOR_WARN_BG, fg=COLOR_WARN_FG,
-                                     font="ShunYiSmall", anchor="w", justify="left")
-        self._dirty_label.pack(fill="x", padx=12, pady=6)
+        self._dirty_panel = ui.RoundedPanel(outer, tone="warn", radius=8, pad=4, page_bg=COLOR_BG)
+        self._dirty_bar = self._dirty_panel            # 兼容既有引用/测试
+        self._dirty_label = tk.Label(self._dirty_panel.inner, text="", bg=COLOR_WARN_BG,
+                                     fg=COLOR_WARN_FG, font="ShunYiSmall", anchor="w",
+                                     justify="left", wraplength=470)
+        self._dirty_label.pack(fill="x", padx=8, pady=4)
 
         # 保存结果轻量提醒：窗口**底部**弹出的一个小框（用 place 浮在内容之上，
         # 不参与 pack 布局，所以弹出/消失都不会让上面的内容跳动）。
         # 位置与配色见 _show_notice；默认不显示。
-        self._notice_box = tk.Frame(outer, bg=COLOR_OK_BG,
-                                    highlightbackground="#D9DDE3", highlightthickness=1)
-        self._notice_label = tk.Label(self._notice_box, text="", bg=COLOR_OK_BG, fg=COLOR_OK,
-                                      font="ShunYiSmall", anchor="w", justify="left",
-                                      wraplength=500)
-        self._notice_label.pack(fill="x", padx=12, pady=8)
+        self._notice_box = ui.RoundedPanel(outer, tone="ok", radius=8, pad=4, page_bg=COLOR_BG,
+                                           shadow=True, fit_width=True)
+        self._notice_label = tk.Label(self._notice_box.inner, text="", bg=COLOR_OK_BG,
+                                      fg=ui.COLOR_OK_TEXT, font="ShunYiSmall", anchor="w",
+                                      justify="left", wraplength=430)
+        self._notice_label.pack(fill="x", padx=8, pady=5)
         self._notice_timer = None      # after() 的句柄，用于"新提醒顶掉旧倒计时"
         self._notice_seq = 0           # 提醒序号：防止旧定时器把新提醒提前关掉
 
-        # 三个区块
-        self._build_models_section(outer)
-        self._build_language_section(outer)
-        self._build_quality_section(outer)
-        self._build_memory_section(outer)
-        self._build_hotkey_section(outer)
+        # 内容区（可滚动；窗口小/屏幕小都能看全）
+        content = self._build_scroll_area(outer)
+        self._content = content
 
-        # 底部按钮
+        # 各区块
+        self._build_models_section(content)
+        self._build_language_section(content)
+        self._build_quality_section(content)
+        self._build_memory_section(content)
+        self._build_hotkey_section(content)
+        tk.Frame(content, bg=COLOR_BG, height=4).pack(fill="x")
+
+        # 底部固定区（不随内容滚动）：按钮行 + 未保存提示条 + 保存结果小框
         footer = tk.Frame(outer, bg=COLOR_BG)
-        footer.pack(fill="x", side="bottom", padx=18, pady=14)
-        ttk.Button(footer, text="恢复默认设置", command=self._on_restore_defaults).pack(side="left")
-        ttk.Button(footer, text="保存", style="Big.TButton", command=self._on_save).pack(side="right")
-        ttk.Button(footer, text="取消", command=self._on_cancel).pack(side="right", padx=(0, 8))
+        footer.pack(fill="x", side="bottom", padx=14, pady=(8, 12))
+        ui.RoundedButton(footer, text="恢复默认设置", kind="secondary", height=30,
+                         page_bg=COLOR_BG, command=self._on_restore_defaults).pack(side="left")
+        self._save_btn = ui.RoundedButton(footer, text="保存", kind="primary", height=32,
+                                          padx=22, page_bg=COLOR_BG, font=UI_FONT_BOLD,
+                                          command=self._on_save)
+        self._save_btn.pack(side="right")
+        ui.RoundedButton(footer, text="取消", kind="secondary", height=32,
+                         page_bg=COLOR_BG, command=self._on_cancel).pack(side="right", padx=(0, 8))
         self._footer = footer          # 提醒小框要贴在它上方
 
-    def _card(self, parent, title: str) -> ttk.Frame:
-        """创建一个白色卡片容器（带内边距与标题），并把外层容器登记下来。"""
-        wrapper = tk.Frame(parent, bg=COLOR_BG)
-        wrapper.pack(fill="x", padx=18, pady=(0, 12))
-        card = tk.Frame(wrapper, bg=COLOR_CARD, highlightbackground="#E3E5E9", highlightthickness=1)
-        card.pack(fill="x")
-        tk.Label(card, text=title, bg=COLOR_CARD, fg=COLOR_TEXT, font="ShunYiTitle").pack(anchor="w", padx=14, pady=(12, 6))
-        return card
+    def _build_scroll_area(self, parent) -> tk.Frame:
+        """内容区（可滚动）：窗口较小或屏幕较小时仍能看全所有设置。
+
+        返回内容容器（各卡片 pack 到这里）。滚动条只在需要时出现。
+        """
+        wrap = tk.Frame(parent, bg=COLOR_BG)
+        wrap.pack(fill="both", expand=True)
+        canvas = tk.Canvas(wrap, bg=COLOR_BG, highlightthickness=0, bd=0)
+        bar = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview,
+                            style="Thin.Vertical.TScrollbar")
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        content = tk.Frame(canvas, bg=COLOR_BG)
+        win = canvas.create_window(0, 0, window=content, anchor="nw")
+
+        def _on_content_configure(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            canvas.itemconfigure(win, width=event.width)
+            need = content.winfo_reqheight() > event.height
+            if need and not bar.winfo_manager():
+                bar.pack(side="right", fill="y")
+            elif not need and bar.winfo_manager():
+                bar.pack_forget()
+
+        def _on_wheel(event):
+            if content.winfo_reqheight() > canvas.winfo_height():
+                canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+        content.bind("<Configure>", _on_content_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        # 滚轮：进入该区域才接管，离开后交还，避免影响其它窗口/控件
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        self._scroll_canvas = canvas
+        self._scroll_bar = bar
+        return content
+
+    def _card(self, parent, title: str, icon: str = "") -> tk.Frame:
+        """圆角卡片（自绘）：返回内容容器，调用方照常 pack 控件。"""
+        card = ui.RoundedCard(parent, page_bg=COLOR_BG, shadow=True)
+        card.pack(fill="x", padx=14, pady=(0, ui.GAP_SECTION))
+        head = tk.Frame(card.body, bg=COLOR_CARD)
+        head.pack(fill="x", pady=(0, 8))
+        if icon:
+            ui.IconBadge(head, icon, size=24, page_bg=COLOR_CARD).pack(side="left", padx=(0, 8))
+        tk.Label(head, text=title, bg=COLOR_CARD, fg=COLOR_TEXT,
+                 font=UI_FONT_BOLD).pack(side="left")
+        return card.body
+
+    # -- 小组件 ------------------------------------------------------------
+
+    def _note_box(self, parent, text: str, tone: str = "info", font: str = "ShunYiSmall",
+                  wraplength: int = 470) -> ui.RoundedPanel:
+        """圆角提示框（对应参考图里的浅蓝说明框）。"""
+        box = ui.RoundedPanel(parent, tone=tone, radius=8, pad=4, page_bg=COLOR_CARD)
+        fill, _border, fg = ui.TONES[tone]
+        tk.Label(box.inner, text=text, bg=fill, fg=fg, font=font, anchor="w", justify="left",
+                 wraplength=wraplength).pack(fill="x", padx=8, pady=5)
+        box.pack(fill="x", pady=(0, 8))
+        return box
+
+    def _status_chip(self, parent, text: str = "") -> ui.RoundedPanel:
+        """模型状态胶囊：对外保留 label 的 cget/configure（业务与回归测试都用 text/fg）。"""
+        chip = ui.RoundedPanel(parent, tone="plain", radius=999, pad=2, page_bg=COLOR_CARD,
+                               fit_width=True)
+        chip.label = tk.Label(chip.inner, text=text, bg=ui.COLOR_HOVER, fg=COLOR_SUBTEXT,
+                              font="ShunYiSmall", anchor="w")
+        chip.label.pack(padx=8, pady=1)
+
+        def _configure(cnf=None, **kw):
+            fg = kw.pop("fg", None)
+            text_val = kw.pop("text", None)
+            if text_val is not None:
+                chip.label.configure(text=text_val)
+            if fg is not None:
+                chip.label.configure(fg=fg)
+                tone = "err" if fg in (COLOR_ERR, ui.COLOR_ERR_TEXT) else (
+                    "warn" if fg in (COLOR_WARN_FG,) else (
+                        "ok" if fg in (COLOR_OK, ui.COLOR_OK_TEXT) else (
+                            "info" if fg in (COLOR_PRIMARY, ui.COLOR_PRIMARY_TEXT) else "plain")))
+                fill, border, _tf = ui.TONES[tone]
+                chip.label.configure(bg=fill)
+                chip.set_tone(fill, border)
+            if kw or cnf:
+                ui.RoundedPanel.configure(chip, cnf, **kw)
+
+        def _cget(key):
+            if key == "text":
+                return chip.label.cget("text")
+            if key == "fg":
+                return chip.label.cget("fg")
+            return ui.RoundedPanel.cget(chip, key)
+
+        chip.configure = _configure
+        chip.config = _configure
+        chip.cget = _cget
+        return chip
+
+    def _action_button(self, parent, text: str = "下载") -> ui.RoundedButton:
+        """模型卡片右侧的动作按钮：按文字自动切换主/危险/次要配色。"""
+        btn = ui.RoundedButton(parent, text=text, kind=self._kind_for_action(text), height=30,
+                               padx=16, page_bg=COLOR_CARD)
+
+        def _configure(cnf=None, **kw):
+            new_text = kw.pop("text", None)
+            if new_text is not None:
+                btn._text = new_text
+                btn._kind = self._kind_for_action(new_text)
+                btn._draw()
+            if kw or cnf:
+                ui.RoundedButton.configure(btn, cnf, **kw)
+
+        btn.configure = _configure
+        btn.config = _configure
+        return btn
+
+    @staticmethod
+    def _kind_for_action(text: str) -> str:
+        if text.startswith("删除") or text.startswith("重试删除"):
+            return "danger"
+        if text in ("取消", "已取消"):
+            return "secondary"
+        return "primary"
+
+    def _header_row(self, parent, title: str, badge: str, tone: str = "info"):
+        """小节标题行：小徽标 + 标题文字（模型/语言等列表项用）。"""
+        row = tk.Frame(parent, bg=COLOR_CARD)
+        row.pack(fill="x")
+        ui.IconBadge(row, badge, size=20, tint=ui.TONES[tone][0]).pack(side="left", padx=(0, 6))
+        tk.Label(row, text=title, bg=COLOR_CARD, fg=ui.TONES[tone][2],
+                 font="ShunYiSmall").pack(side="left")
+        return row
 
     def _build_models_section(self, parent) -> None:
-        card = self._card(parent, "翻译模型")
-        tk.Label(card, text="提示：下载模型是本软件唯一需要联网的操作，翻译过程完全离线。",
-                 bg=COLOR_CARD, fg=COLOR_WARN_FG, font="ShunYiSmall").pack(anchor="w", padx=14, pady=(0, 8))
+        card = self._card(parent, "翻译模型", icon="models")
+        self._note_box(card, "下载模型是本软件唯一需要联网的操作，翻译过程完全离线。", "info")
 
-        # 显示模型实际存放位置：默认在「软件所在目录\models」，
+        # 显示模型实际存放位置：默认在「软件所在目录\\models」，
         # 若该路径含中文或不可写则自动回退到数据目录（sentencepiece 读不了非 ASCII 路径）
-        root = paths.models_root()
-        is_program_dir = os.path.abspath(root) == os.path.abspath(paths.default_models_root())
-        where = f"模型存放位置：{root}"
+        root_dir = paths.models_root()
+        is_program_dir = os.path.abspath(root_dir) == os.path.abspath(paths.default_models_root())
+        where = f"模型存放位置：{root_dir}"
         if not is_program_dir:
             where += "（软件所在目录含中文或不可写，已自动回退到这里；把软件放到纯英文路径即可改用软件目录）"
         tk.Label(card, text=where, bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=560).pack(fill="x", padx=14, pady=(0, 8))
+                 anchor="w", justify="left", wraplength=440).pack(fill="x", pady=(0, 8))
 
         for info in MODEL_CARDS:
             key = info["key"]
             row = tk.Frame(card, bg=COLOR_CARD)
-            row.pack(fill="x", padx=14, pady=(0, 6))
+            row.pack(fill="x", pady=(0, 4))
 
             left = tk.Frame(row, bg=COLOR_CARD)
             left.pack(side="left", fill="x", expand=True)
-            tk.Label(left, text=f'{info["title"]}    {info["direction"]}    {info["size_text"]}',
-                     bg=COLOR_CARD, fg=COLOR_TEXT, font="ShunYiBold").pack(anchor="w")
-            status = tk.Label(left, text="检查中…", bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall")
-            status.pack(anchor="w", pady=(2, 0))
+            title_line = tk.Frame(left, bg=COLOR_CARD)
+            title_line.pack(fill="x")
+            tk.Label(title_line, text=info["title"], bg=COLOR_CARD, fg=COLOR_TEXT,
+                     font=UI_FONT_BOLD).pack(side="left")
+            tk.Label(title_line, text=info["direction"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+                     font="ShunYiSmall").pack(side="left", padx=(8, 0))
+            tk.Label(title_line, text=info["size_text"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+                     font="ShunYiSmall").pack(side="left", padx=(8, 0))
 
-            action = ttk.Button(row, text="下载", width=8)
+            status = self._status_chip(left)
+            status.pack(anchor="w", pady=(4, 0))
+
+            action = self._action_button(row)
             action.pack(side="right", padx=(10, 0))
 
-            progress = ttk.Progressbar(card, mode="determinate", maximum=100)
-            note = tk.Label(card, text=info["note"], bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall")
-            note.pack(anchor="w", padx=14, pady=(0, 10))
+            progress = ttk.Progressbar(card, mode="determinate", maximum=100,
+                                       style="Thin.Horizontal.TProgressbar")
+            note = tk.Label(card, text=info["note"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+                            font="ShunYiSmall", anchor="w", justify="left", wraplength=440)
+            note.pack(fill="x", pady=(0, 10))
 
             self._model_ui[key] = {
                 "status": status,
@@ -518,16 +690,18 @@ class SettingsWindow:
         # 因为"它改了却还继续打扰我"对用户来说等同于开关坏了。
         self._notify_enabled_var = tk.BooleanVar(value=True)
         line = tk.Frame(card, bg=COLOR_CARD)
-        line.pack(fill="x", padx=14, pady=(10, 2))
-        ttk.Checkbutton(line, text="通知提醒",
-                        variable=self._notify_enabled_var,
-                        command=self._on_notify_change).pack(side="left")
+        line.pack(fill="x", pady=(2, 2))
+        ui.IconBadge(line, "bell", size=20, page_bg=COLOR_CARD).pack(side="left", padx=(0, 6))
+        tk.Label(line, text="通知提醒", bg=COLOR_CARD, fg=COLOR_TEXT,
+                 font=UI_FONT).pack(side="left")
+        ui.ToggleSwitch(line, self._notify_enabled_var, command=self._on_notify_change,
+                        page_bg=COLOR_CARD).pack(side="right")
         tk.Label(card, text="关闭后所有气泡提醒都不再弹出（翻译完成、取词失败、快捷键冲突、"
-                            "模型下载完成/失败、启动提示等），只记日志。默认开启；"
-                            "改动立即生效，不需要点「保存」。",
+                            "模型下载完成/失败、启动提示等），只记日志。默认开启；改动立即生效，"
+                            "不需要点「保存」。",
                  bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=520
-                 ).pack(fill="x", padx=14, pady=(0, 12))
+                 anchor="w", justify="left", wraplength=430
+                 ).pack(fill="x", pady=(4, 0))
 
     def _on_notify_change(self) -> None:
         """用户切换「通知提醒」：**立即写盘生效**，不等「保存」。
@@ -550,85 +724,94 @@ class SettingsWindow:
 
     def _build_language_section(self, parent) -> None:
         """目标语言（此前只能从托盘菜单改，窗口里看不到当前值——2026-09-29 补上）。"""
-        card = self._card(parent, "目标语言")
+        card = self._card(parent, "目标语言", icon="lang")
         self._lang_var = tk.StringVar(value="en")
-        for value, title, desc in LANG_INFO:
-            line = tk.Frame(card, bg=COLOR_CARD)
-            line.pack(fill="x", padx=14, pady=3)
-            rb = ttk.Radiobutton(line, text=title, value=value, variable=self._lang_var,
-                                 command=self._on_lang_change)
-            rb.pack(side="left")
-            tk.Label(line, text=f"　{desc}", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                     font="ShunYiSmall").pack(side="left")
-        tk.Label(card, text="与托盘菜单里的「目标语言」是同一项，两边任改一处即可，显示会自动保持一致。",
-                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=560).pack(fill="x", padx=14, pady=(4, 12))
+        self._lang_group = ui.SegmentGroup(card, [(v, t) for v, t, _d in LANG_INFO],
+                                           self._lang_var, self._on_lang_change,
+                                           page_bg=COLOR_CARD)
+        self._lang_group.pack(anchor="w", pady=(0, 6))
+        self._lang_desc = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+                                   font="ShunYiSmall", anchor="w", justify="left", wraplength=440)
+        self._lang_desc.pack(fill="x", pady=(0, 6))
+        self._lang_var.trace_add("write", lambda *_: self._sync_lang_desc())
+        self._sync_lang_desc()
+        self._note_box(card, "与托盘菜单里的「目标语言」是同一项，两边任改一处即可，显示会自动保持一致。",
+                       "plain")
+
+    def _sync_lang_desc(self) -> None:
+        """更新分段选择器下方的说明文字（随选中项变化）。"""
+        desc = next((d for v, _t, d in LANG_INFO if v == self._lang_var.get()), "")
+        try:
+            self._lang_desc.configure(text=desc)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_lang_change(self) -> None:
-        """用户点了「英文 / 日文」单选。"""
+        """用户点了「英文 / 日文」。"""
         if self._syncing:
             return
         self._mark_dirty()
 
     def _build_quality_section(self, parent) -> None:
-        card = self._card(parent, "翻译档位")
+        card = self._card(parent, "翻译档位", icon="speed")
         self._quality_var = tk.StringVar(value="fast")
-        for value, title, desc in QUALITY_INFO:
-            line = tk.Frame(card, bg=COLOR_CARD)
-            line.pack(fill="x", padx=14, pady=3)
-            rb = ttk.Radiobutton(line, text=title, value=value, variable=self._quality_var,
-                                 command=self._on_quality_change)
-            rb.pack(side="left")
-            tk.Label(line, text=f"　{desc}", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                     font="ShunYiSmall").pack(side="left")
-        self._speed_hint = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                                    justify="left", anchor="w")
-        self._speed_hint.pack(fill="x", padx=14, pady=(6, 12))
+        self._quality_group = ui.SegmentGroup(card, [(v, t) for v, t, _d in QUALITY_INFO],
+                                              self._quality_var, self._on_quality_change,
+                                              page_bg=COLOR_CARD)
+        self._quality_group.pack(anchor="w", pady=(0, 6))
+        self._speed_hint = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+                                    font="ShunYiSmall", justify="left", anchor="w",
+                                    wraplength=440)
+        self._speed_hint.pack(fill="x")
 
     def _build_memory_section(self, parent) -> None:
         """内存优化：空闲时是否释放模型。"""
-        card = self._card(parent, "内存优化")
+        card = self._card(parent, "内存优化", icon="memory")
         self._idle_unload_var = tk.BooleanVar(value=True)
 
         line = tk.Frame(card, bg=COLOR_CARD)
-        line.pack(fill="x", padx=14, pady=2)
-        ttk.Checkbutton(
-            line, text="长时间不翻译时自动释放内存",
-            variable=self._idle_unload_var, command=self._on_memory_change,
-        ).pack(side="left")
+        line.pack(fill="x", pady=(0, 6))
+        tk.Label(line, text="长时间不翻译时自动释放内存", bg=COLOR_CARD, fg=COLOR_TEXT,
+                 font=UI_FONT).pack(side="left")
+        ui.ToggleSwitch(line, self._idle_unload_var, command=self._on_memory_change,
+                        page_bg=COLOR_CARD).pack(side="right")
 
-        tk.Label(card,
-                 text="勾选：挂机 15 分钟没翻译就把模型从内存里放掉，可省约 97~238 MB；"
-                      "代价是释放后下一次翻译多花约 0.15 秒（实测），基本察觉不到。",
-                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=560).pack(fill="x", padx=14, pady=(4, 2))
-        tk.Label(card,
-                 text="不勾选：模型一直留在内存里，翻译始终最快（适合经常随手翻译的人）。",
-                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=560).pack(fill="x", padx=14, pady=(0, 12))
+        self._note_box(card,
+                       "开启：挂机 15 分钟没翻译就把模型从内存里放掉，可省约 97~238 MB；"
+                       "代价是释放后下一次翻译多花约 0.15 秒（实测），基本察觉不到。\n"
+                       "关闭：模型一直留在内存里，翻译始终最快（适合经常随手翻译的人）。",
+                       "plain")
 
     def _build_hotkey_section(self, parent) -> None:
-        card = self._card(parent, "快捷键")
+        card = self._card(parent, "快捷键", icon="hotkey")
         tk.Label(card, text="按一下就能把刚打的中文变成译文。", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                 font="ShunYiSmall").pack(anchor="w", padx=14, pady=(0, 6))
+                 font="ShunYiSmall").pack(anchor="w", pady=(0, 6))
 
         line = tk.Frame(card, bg=COLOR_CARD)
-        line.pack(fill="x", padx=14)
-        self._hotkey_entry = tk.Entry(line, font="ShunYiMono", justify="center", width=18,
-                                      relief="solid", bd=1, readonlybackground="#FFFFFF")
-        self._hotkey_entry.pack(side="left", ipady=4)
+        line.pack(fill="x")
+        # 输入框：白底 + 浅灰描边的圆角外壳（自绘面板内嵌 Entry）
+        shell = ui.RoundedPanel(line, tone="plain", radius=8, pad=3, page_bg=COLOR_CARD,
+                                fill=COLOR_CARD, border=ui.COLOR_BORDER_STRONG, fit_width=True)
+        shell.pack(side="left")
+        self._hotkey_entry = tk.Entry(shell.inner, font="ShunYiMono", justify="center", width=14,
+                                      relief="flat", bd=0, bg=COLOR_CARD, fg=COLOR_TEXT,
+                                      readonlybackground=COLOR_CARD,
+                                      highlightthickness=0)
+        self._hotkey_entry.pack(padx=6, pady=3)
         self._hotkey_entry.configure(state="readonly")
-        self._record_btn = ttk.Button(line, text="录制", width=8, command=self._toggle_record)
+        self._record_btn = ui.RoundedButton(line, text="录制", kind="secondary", height=28,
+                                            padx=14, page_bg=COLOR_CARD,
+                                            command=self._toggle_record)
         self._record_btn.pack(side="left", padx=(8, 0))
-        ttk.Button(line, text="恢复默认", width=10, command=self._reset_hotkey).pack(side="left", padx=(8, 0))
+        ui.RoundedButton(line, text="恢复默认", kind="secondary", height=28, padx=14,
+                         page_bg=COLOR_CARD, command=self._reset_hotkey).pack(side="left", padx=(8, 0))
 
         self._hotkey_hint = tk.Label(card, text="要求：至少包含一个 Ctrl / Alt / Shift，再加一个主键（例如 Alt+J）。",
                                      bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                                     anchor="w", justify="left")
-        self._hotkey_hint.pack(fill="x", padx=14, pady=(6, 2))
-        tk.Label(card, text="说明：Win 键组合无法在窗口内录制（会被系统占用），如需使用请手工编辑配置文件写 windows+j。",
-                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall", anchor="w",
-                 justify="left", wraplength=560).pack(fill="x", padx=14, pady=(0, 12))
+                                     anchor="w", justify="left", wraplength=440)
+        self._hotkey_hint.pack(fill="x", pady=(8, 0))
+        self._note_box(card, "说明：Win 键组合无法在窗口内录制（会被系统占用），"
+                             "如需使用请手工编辑配置文件写 windows+j。", "plain")
 
         # 录制：在输入框和窗口上都监听按键
         for widget in (self._hotkey_entry, self.root):
@@ -801,10 +984,10 @@ class SettingsWindow:
     # ---------------------------------------------------- 保存结果的窗口内提醒
 
     NOTICE_STYLE = {
-        # level: (底色, 字色, 默认停留秒数)
-        "ok": (COLOR_OK_BG, COLOR_OK, 3.0),
-        "info": (COLOR_INFO_BG, COLOR_PRIMARY, 2.6),
-        "err": (COLOR_ERR_BG, COLOR_ERR, 7.0),
+        # level: (语义色名, 默认停留秒数) —— 底色/描边/字色统一取 ui_kit.TONES
+        "ok": ("ok", 3.0),
+        "info": ("info", 2.6),
+        "err": ("err", 7.0),
     }
 
     def _show_notice(self, text: str, level: str = "ok", seconds: float | None = None) -> None:
@@ -820,7 +1003,8 @@ class SettingsWindow:
             旧提醒的倒计时不能把新提醒提前关掉；
           * 文字较长（例如更换快捷键后的说明）时自动延长停留时间，保证能读完。
         """
-        bg, fg, default_secs = self.NOTICE_STYLE.get(level, self.NOTICE_STYLE["ok"])
+        tone, default_secs = self.NOTICE_STYLE.get(level, self.NOTICE_STYLE["ok"])
+        fill, border, fg = ui.TONES[tone]
         text = (text or "").replace("\n\n", "\n")
         if seconds is None:
             # 每多一行多停 0.9 秒，最多 7 秒
@@ -836,8 +1020,8 @@ class SettingsWindow:
                 pass
             self._notice_timer = None
 
-        self._notice_box.configure(bg=bg)
-        self._notice_label.configure(text=text, bg=bg, fg=fg)
+        self._notice_box.set_tone(fill, border)
+        self._notice_label.configure(text=text, bg=fill, fg=fg)
         # 贴在窗口底部：横向居中、纵向位于底部按钮行上方（小框底边锚定）。
         # 说明：调用本方法时"未保存提示条"必然已收起（三条保存路径都会先把
         # 未保存状态清掉），所以这里只需按按钮行高度让位，不会与它重叠。
@@ -1059,7 +1243,7 @@ class SettingsWindow:
         ui = self._model_ui[key]
         ui["status"].configure(text="状态：正在下载 0%", fg=COLOR_PRIMARY)
         ui["action"].configure(text="取消", command=lambda k=key: self._cancel_download(k))
-        ui["progress"].pack(fill="x", padx=14, pady=(0, 8))
+        ui["progress"].pack(fill="x", pady=(2, 8))
         ui["progress"]["value"] = 0
 
         def worker():
@@ -1144,7 +1328,7 @@ class SettingsWindow:
             return
         # 防御性处理：无论从哪条路径进来，都确保进度条是显示状态
         if not ui["progress"].winfo_manager():
-            ui["progress"].pack(fill="x", padx=14, pady=(0, 8))
+            ui["progress"].pack(fill="x", pady=(2, 8))
         percent = int(done * 100 / total) if total else 0
         # total 可能为 None（服务器没给 Content-Length），此时只显示已下载量
         if total:
