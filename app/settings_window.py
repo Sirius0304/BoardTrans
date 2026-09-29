@@ -45,8 +45,21 @@ except Exception as _exc:  # noqa: BLE001
 
 # ----------------------------------------------------------------- 外观常量
 
-FONT_FAMILY = "Microsoft YaHei UI"
-FONT_FALLBACK = "Microsoft YaHei"
+# 界面统一字体：黑体（SimHei）。
+# 注意（2026-09-29 实测）：Windows 上 simhei.ttf 在 Tk 字体表里注册的族名是**中文"黑体"**，
+# 用英文名 "SimHei" 查不到，所以首选 "黑体"，再把 "SimHei" 作为少数环境的备选；
+# 万一两者都没有（精简版系统删过字体），退回原来的雅黑，保证界面不会退化成点阵字体。
+FONT_FAMILY = "黑体"
+FONT_FALLBACK = "SimHei"
+FONT_LAST_RESORT = "Microsoft YaHei UI"
+
+# ttk 样式里引用字体时**只能写命名字体名本身**（如 "ShunYiBase"）。
+# 坑（2026-09-29 实测）：写成元组 ("ShunYiBase", 10) 后 Tcl 端会变成字符串
+# "ShunYiBase 10"，Tk 把它当"字体描述"解析 —— 族名取 "ShunYiBase"（系统里并不存在
+# 这个字体族）→ 静默回退成宋体，于是按钮/单选/复选全长成宋体，而显式写
+# font="ShunYiBold" 的「保存」按钮却是黑体。用命名字体名即可正常解析。
+UI_FONT = "ShunYiBase"
+UI_FONT_BOLD = "ShunYiBold"
 COLOR_BG = "#F5F6F8"
 COLOR_CARD = "#FFFFFF"
 COLOR_TEXT = "#1F2329"
@@ -283,7 +296,16 @@ class SettingsWindow:
             families = set(root.tk.call("font", "families"))
         except Exception:  # noqa: BLE001
             pass
-        family = FONT_FAMILY if FONT_FAMILY in families else (FONT_FALLBACK if FONT_FALLBACK in families else "TkDefaultFont")
+        # 依次尝试：黑体（中文族名） → SimHei（英文族名） → 雅黑（兜底，防精简系统删过字体）
+        family = None
+        for candidate in (FONT_FAMILY, FONT_FALLBACK, FONT_LAST_RESORT, "Microsoft YaHei"):
+            if candidate in families:
+                family = candidate
+                break
+        if family is None:
+            family = "TkDefaultFont"
+        elif family != FONT_FAMILY:
+            log.warning("界面字体「%s」在本机不可用，已回退为「%s」", FONT_FAMILY, family)
 
         for name, size, weight in (
             ("ShunYiBase", 10, "normal"),
@@ -297,15 +319,79 @@ class SettingsWindow:
             except Exception:  # noqa: BLE001
                 pass
 
-        style = ttk.Style(root)
-        try:
-            style.theme_use("vista")          # Windows 原生观感
-        except tk.TclError:
+        # 统一 Tk 内置命名字体：这样"没有显式指定 font"的控件（含 tk.Entry 右键菜单、
+        # 内建对话框的文本、下拉列表等）也会跟着变成黑体，不会漏掉任何一处文字
+        for named in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont",
+                      "TkTooltipFont", "TkCaptionFont", "TkSmallCaptionFont",
+                      "TkIconFont", "TkFixedFont"):
             try:
-                style.theme_use("clam")
-            except tk.TclError:
+                root.tk.call("font", "configure", named, "-family", family)
+            except Exception:  # noqa: BLE001
                 pass
-        style.configure(".", font=("ShunYiBase", 10) if family else None, background=COLOR_BG)
+
+        style = ttk.Style(root)
+        # 主题选择（2026-09-29 实测结论，勿改回 vista）：
+        # Windows 的 vista / xpnative 是"原生控件绘制"，**会直接忽略 ttk 的 -font 设置**，
+        # 于是按钮/单选/复选/下拉全都还是系统的宋体 —— 与"界面字体统一"的目标冲突。
+        # clam 是 Tk 自己的绘制，字体完全可控，因此改用 clam，并按下面的配色补回观感。
+        theme_used = ""
+        for candidate in ("clam", "default"):
+            try:
+                style.theme_use(candidate)
+                theme_used = candidate
+                break
+            except tk.TclError:
+                continue
+        log.info("设置窗口 ttk 主题: %s（字体: %s）", theme_used or "默认", family)
+
+        # 先给所有 ttk 控件兜底，再逐个把常用控件的字体钉死（有些控件从控件级选项取字体）
+        style.configure(".", font=UI_FONT if family else None, background=COLOR_BG)
+        for cls in ("TLabel", "TLabelframe", "TLabelframe.Label", "TNotebook.Tab", "TScale",
+                    "TMenubutton"):
+            try:
+                style.configure(cls, font=UI_FONT)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # 普通按钮：白底 + 细边框，贴合卡片风格
+        style.configure("TButton", font=UI_FONT, padding=(10, 5),
+                        background="#FFFFFF", foreground=COLOR_TEXT,
+                        bordercolor="#D9DDE3", lightcolor="#FFFFFF", darkcolor="#FFFFFF",
+                        focuscolor="#D9DDE3")
+        style.map("TButton",
+                  background=[("pressed", "#E6E9EE"), ("active", "#F2F4F7"), ("disabled", "#F5F6F8")],
+                  foreground=[("disabled", COLOR_SUBTEXT)])
+
+        # 主按钮（保存）：蓝色实心
+        style.configure("Big.TButton", font="ShunYiBold", padding=(16, 6),
+                        background=COLOR_PRIMARY, foreground="#FFFFFF",
+                        bordercolor=COLOR_PRIMARY, lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY)
+        style.map("Big.TButton",
+                  background=[("pressed", "#1F4CA8"), ("active", "#2559C4"), ("disabled", "#A9BFF0")],
+                  foreground=[("disabled", "#F0F4FF")])
+
+        # 单选 / 复选：卡片内是白底，必须显式设置背景，否则会出现灰色块
+        for cls in ("TCheckbutton", "TRadiobutton"):
+            style.configure(cls, font=UI_FONT, background=COLOR_CARD,
+                            foreground=COLOR_TEXT, indicatorcolor="#FFFFFF",
+                            bordercolor="#C9CED6", focuscolor=COLOR_CARD)
+            style.map(cls,
+                      background=[("active", COLOR_CARD), ("disabled", COLOR_CARD)],
+                      foreground=[("disabled", COLOR_SUBTEXT)],
+                      indicatorcolor=[("selected", COLOR_PRIMARY)])
+
+        # 下拉框 / 输入框（本窗口暂无下拉框，为将来新增保持一致）
+        style.configure("TCombobox", font=UI_FONT, fieldbackground="#FFFFFF",
+                        background="#FFFFFF", foreground=COLOR_TEXT, arrowcolor=COLOR_TEXT,
+                        bordercolor="#D9DDE3", lightcolor="#FFFFFF", darkcolor="#FFFFFF")
+        style.map("TCombobox", fieldbackground=[("readonly", "#FFFFFF")],
+                  foreground=[("disabled", COLOR_SUBTEXT)])
+        style.configure("TEntry", font=UI_FONT, fieldbackground="#FFFFFF",
+                        foreground=COLOR_TEXT, bordercolor="#D9DDE3")
+
+        # 进度条：与主色一致，槽底浅灰，避免 clam 默认的绿色
+        style.configure("TProgressbar", background=COLOR_PRIMARY, troughcolor="#E6E9EE",
+                        bordercolor="#E6E9EE", lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY)
         style.configure("Card.TFrame", background=COLOR_CARD, relief="flat")
         style.configure("CardTitle.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT, font="ShunYiTitle")
         style.configure("CardText.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT)
