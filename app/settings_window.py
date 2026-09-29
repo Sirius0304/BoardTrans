@@ -273,6 +273,8 @@ class SettingsWindow:
     def _run(self) -> None:
         """窗口线程主函数：建界面 -> 常驻 mainloop。"""
         try:
+            # 必须在创建任何窗口之前声明 DPI 感知（否则 Windows 位图拉伸 → 全糊）
+            ui.enable_dpi_awareness()
             self.root = tk.Tk()
             self.root.title("瞬译 · 设置")
             self.root.configure(bg=COLOR_BG)
@@ -293,9 +295,17 @@ class SettingsWindow:
     def _apply_theme(self) -> None:
         """字体、DPI 缩放与 ttk 主题。"""
         root = self.root
-        # 按实际 DPI 设置 tk 缩放，保证高分屏下文字与控件不发虚、不错位
+        # 先声明 DPI 感知：否则 Windows 会把窗口位图整体拉伸，文字与自绘控件都会发虚。
+        # 正常情况下启动脚本已经调用过；这里是兜底（幂等，第二次调用直接返回）。
+        awareness = ui.enable_dpi_awareness()
         try:
-            dpi = root.winfo_fpixels("1i")
+            dpi = root.winfo_fpixels("1i") or 96.0
+        except Exception:  # noqa: BLE001
+            dpi = 96.0
+        dpi = max(96.0, dpi)
+        # 按实际 DPI 设置 tk 缩放；同时把像素型设计值（圆角/间距/控件高度）一并放大
+        k = ui.set_scale(dpi / 96.0)
+        try:
             root.tk.call("tk", "scaling", max(1.0, dpi / 72.0))
         except Exception:  # noqa: BLE001
             pass
@@ -316,27 +326,40 @@ class SettingsWindow:
         elif family != FONT_FAMILY:
             log.warning("界面字体「%s」在本机不可用，已回退为「%s」", FONT_FAMILY, family)
 
-        for name, size, weight in (
+        # 字号用**整数像素**（Tk 里负数表示像素）：磅值在 DPI 缩放下会算成 13.34px 这类
+        # 小数，字形落不到整像素上会显得发虚；直接给像素值最锐利，也方便按 DPI 等比放大。
+        for name, pt, weight in (
             ("ShunYiBase", 10, "normal"),
             ("ShunYiBold", 10, "bold"),
             ("ShunYiTitle", 12, "bold"),
             ("ShunYiSmall", 9, "normal"),
             ("ShunYiMono", 11, "normal"),
         ):
+            pixels = -max(9, int(round(pt * dpi / 72.0)))
             try:
-                root.tk.call("font", "create", name, "-family", family, "-size", size, "-weight", weight)
+                # 先删同名旧字体再建：font create 对已存在的名字会报错并**保留旧字号**，
+                # 那样在多窗口 / DPI 变化时就会用错字号（2026-09-29 实测）
+                root.tk.call("font", "delete", name)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                root.tk.call("font", "create", name, "-family", family,
+                             "-size", pixels, "-weight", weight)
             except Exception:  # noqa: BLE001
                 pass
 
         # 统一 Tk 内置命名字体：这样"没有显式指定 font"的控件（含 tk.Entry 右键菜单、
-        # 内建对话框的文本、下拉列表等）也会跟着变成黑体，不会漏掉任何一处文字
+        # 内建对话框的文本、下拉列表等）也会跟着变成黑体 + 整数像素
         for named in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont",
                       "TkTooltipFont", "TkCaptionFont", "TkSmallCaptionFont",
                       "TkIconFont", "TkFixedFont"):
             try:
-                root.tk.call("font", "configure", named, "-family", family)
+                root.tk.call("font", "configure", named, "-family", family,
+                             "-size", -max(9, int(round(9 * dpi / 72.0))))
             except Exception:  # noqa: BLE001
                 pass
+        log.info("DPI 感知: %s；DPI %.0f（缩放 %.2f×）；字体: %s，字号按整数像素",
+                 awareness, dpi, k, family)
 
         style = ttk.Style(root)
         # 主题选择（2026-09-29 实测结论，勿改回 vista）：
@@ -459,7 +482,7 @@ class SettingsWindow:
         self._dirty_bar = self._dirty_panel            # 兼容既有引用/测试
         self._dirty_label = tk.Label(self._dirty_panel.inner, text="", bg=COLOR_WARN_BG,
                                      fg=COLOR_WARN_FG, font="ShunYiSmall", anchor="w",
-                                     justify="left", wraplength=470)
+                                     justify="left", wraplength=ui.S(470))
         self._dirty_label.pack(fill="x", padx=8, pady=4)
 
         # 保存结果轻量提醒：窗口**底部**弹出的一个小框（用 place 浮在内容之上，
@@ -469,7 +492,7 @@ class SettingsWindow:
                                            shadow=True, fit_width=True)
         self._notice_label = tk.Label(self._notice_box.inner, text="", bg=COLOR_OK_BG,
                                       fg=ui.COLOR_OK_TEXT, font="ShunYiSmall", anchor="w",
-                                      justify="left", wraplength=430)
+                                      justify="left", wraplength=ui.S(430))
         self._notice_label.pack(fill="x", padx=8, pady=5)
         self._notice_timer = None      # after() 的句柄，用于"新提醒顶掉旧倒计时"
         self._notice_seq = 0           # 提醒序号：防止旧定时器把新提醒提前关掉
@@ -558,7 +581,7 @@ class SettingsWindow:
         box = ui.RoundedPanel(parent, tone=tone, radius=8, pad=4, page_bg=COLOR_CARD)
         fill, _border, fg = ui.TONES[tone]
         tk.Label(box.inner, text=text, bg=fill, fg=fg, font=font, anchor="w", justify="left",
-                 wraplength=wraplength).pack(fill="x", padx=8, pady=5)
+                 wraplength=ui.S(wraplength)).pack(fill="x", padx=ui.S(8), pady=ui.S(5))
         box.pack(fill="x", pady=(0, 8))
         return box
 
@@ -646,7 +669,7 @@ class SettingsWindow:
         if not is_program_dir:
             where += "（软件所在目录含中文或不可写，已自动回退到这里；把软件放到纯英文路径即可改用软件目录）"
         tk.Label(card, text=where, bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=440).pack(fill="x", pady=(0, 8))
+                 anchor="w", justify="left", wraplength=ui.S(440)).pack(fill="x", pady=(0, 8))
 
         for info in MODEL_CARDS:
             key = info["key"]
@@ -673,7 +696,7 @@ class SettingsWindow:
             progress = ttk.Progressbar(card, mode="determinate", maximum=100,
                                        style="Thin.Horizontal.TProgressbar")
             note = tk.Label(card, text=info["note"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                            font="ShunYiSmall", anchor="w", justify="left", wraplength=440)
+                            font="ShunYiSmall", anchor="w", justify="left", wraplength=ui.S(440))
             note.pack(fill="x", pady=(0, 10))
 
             self._model_ui[key] = {
@@ -688,7 +711,7 @@ class SettingsWindow:
         # 「通知提醒」总开关（默认开）。关掉后所有气泡提醒都不再弹出。
         # 注意：这个开关**改动立即生效**（见 _on_notify_change），不参与「保存」批量提交，
         # 因为"它改了却还继续打扰我"对用户来说等同于开关坏了。
-        self._notify_enabled_var = tk.BooleanVar(value=True)
+        self._notify_enabled_var = tk.BooleanVar(master=self.root, value=True)
         line = tk.Frame(card, bg=COLOR_CARD)
         line.pack(fill="x", pady=(2, 2))
         ui.IconBadge(line, "bell", size=20, page_bg=COLOR_CARD).pack(side="left", padx=(0, 6))
@@ -700,7 +723,7 @@ class SettingsWindow:
                             "模型下载完成/失败、启动提示等），只记日志。默认开启；改动立即生效，"
                             "不需要点「保存」。",
                  bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=430
+                 anchor="w", justify="left", wraplength=ui.S(430)
                  ).pack(fill="x", pady=(4, 0))
 
     def _on_notify_change(self) -> None:
@@ -725,13 +748,13 @@ class SettingsWindow:
     def _build_language_section(self, parent) -> None:
         """目标语言（此前只能从托盘菜单改，窗口里看不到当前值——2026-09-29 补上）。"""
         card = self._card(parent, "目标语言", icon="lang")
-        self._lang_var = tk.StringVar(value="en")
+        self._lang_var = tk.StringVar(master=self.root, value="en")
         self._lang_group = ui.SegmentGroup(card, [(v, t) for v, t, _d in LANG_INFO],
                                            self._lang_var, self._on_lang_change,
                                            page_bg=COLOR_CARD)
         self._lang_group.pack(anchor="w", pady=(0, 6))
         self._lang_desc = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                                   font="ShunYiSmall", anchor="w", justify="left", wraplength=440)
+                                   font="ShunYiSmall", anchor="w", justify="left", wraplength=ui.S(440))
         self._lang_desc.pack(fill="x", pady=(0, 6))
         self._lang_var.trace_add("write", lambda *_: self._sync_lang_desc())
         self._sync_lang_desc()
@@ -754,20 +777,20 @@ class SettingsWindow:
 
     def _build_quality_section(self, parent) -> None:
         card = self._card(parent, "翻译档位", icon="speed")
-        self._quality_var = tk.StringVar(value="fast")
+        self._quality_var = tk.StringVar(master=self.root, value="fast")
         self._quality_group = ui.SegmentGroup(card, [(v, t) for v, t, _d in QUALITY_INFO],
                                               self._quality_var, self._on_quality_change,
                                               page_bg=COLOR_CARD)
         self._quality_group.pack(anchor="w", pady=(0, 6))
         self._speed_hint = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                                     font="ShunYiSmall", justify="left", anchor="w",
-                                    wraplength=440)
+                                    wraplength=ui.S(440))
         self._speed_hint.pack(fill="x")
 
     def _build_memory_section(self, parent) -> None:
         """内存优化：空闲时是否释放模型。"""
         card = self._card(parent, "内存优化", icon="memory")
-        self._idle_unload_var = tk.BooleanVar(value=True)
+        self._idle_unload_var = tk.BooleanVar(master=self.root, value=True)
 
         line = tk.Frame(card, bg=COLOR_CARD)
         line.pack(fill="x", pady=(0, 6))
@@ -808,7 +831,7 @@ class SettingsWindow:
 
         self._hotkey_hint = tk.Label(card, text="要求：至少包含一个 Ctrl / Alt / Shift，再加一个主键（例如 Alt+J）。",
                                      bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                                     anchor="w", justify="left", wraplength=440)
+                                     anchor="w", justify="left", wraplength=ui.S(440))
         self._hotkey_hint.pack(fill="x", pady=(8, 0))
         self._note_box(card, "说明：Win 键组合无法在窗口内录制（会被系统占用），"
                              "如需使用请手工编辑配置文件写 windows+j。", "plain")

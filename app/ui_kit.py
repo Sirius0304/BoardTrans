@@ -19,8 +19,68 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
 import tkinter as tk
-import tkinter.font as tkfont
+
+# --------------------------------------------------------------- DPI 感知
+# 为什么要这个（2026-09-29 实测根因）：进程若不声明 DPI 感知，Windows 会把整个
+# 窗口**按位图拉伸**到缩放比例 —— 在 125%/150% 的屏幕上，文字和自绘控件都会发虚。
+# 必须在创建任何窗口之前调用；per-monitor-v2（Win10 1703+）> per-monitor > system。
+_DPI_AWARENESS = ""
+
+
+def enable_dpi_awareness() -> str:
+    """让进程感知 DPI（幂等；返回实际生效的级别，便于日志与自检）。"""
+    global _DPI_AWARENESS
+    if _DPI_AWARENESS:
+        return _DPI_AWARENESS
+    if not sys.platform.startswith("win"):
+        _DPI_AWARENESS = "non-windows"
+        return _DPI_AWARENESS
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+    except OSError:
+        _DPI_AWARENESS = "unavailable"
+        return _DPI_AWARENESS
+    # 1) per-monitor v2：DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+    try:
+        if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            _DPI_AWARENESS = "per-monitor-v2"
+            return _DPI_AWARENESS
+    except Exception:  # noqa: BLE001
+        pass
+    # 2) per-monitor（Win8.1+）
+    try:
+        shcore = ctypes.WinDLL("shcore", use_last_error=True)
+        if shcore.SetProcessDpiAwareness(2) == 0:
+            _DPI_AWARENESS = "per-monitor"
+            return _DPI_AWARENESS
+    except Exception:  # noqa: BLE001
+        pass
+    # 3) system（Vista+，最保守）
+    try:
+        if user32.SetProcessDPIAware():
+            _DPI_AWARENESS = "system"
+            return _DPI_AWARENESS
+    except Exception:  # noqa: BLE001
+        pass
+    _DPI_AWARENESS = "none"
+    return _DPI_AWARENESS
+
+
+def dpi_awareness() -> str:
+    return _DPI_AWARENESS or enable_dpi_awareness()
+
+
+def is_dpi_aware() -> bool:
+    """当前进程是否真的被系统认定为 DPI 感知（用系统 API 复核，不只看我们自己记的）。"""
+    if not sys.platform.startswith("win"):
+        return True
+    try:
+        return bool(ctypes.WinDLL("user32").IsProcessDPIAware())
+    except Exception:  # noqa: BLE001
+        return False
 
 # --------------------------------------------------------------- 设计令牌
 # 参考图（Clash Verge 风格）：近白页面 + 白卡片 + 浅灰描边 + 蓝色主色 + 语义色
@@ -66,6 +126,31 @@ UI_FONT_BOLD = "ShunYiBold"
 UI_FONT_SMALL = "ShunYiSmall"
 UI_FONT_MONO = "ShunYiMono"
 
+# --------------------------------------------------------------- 尺寸缩放
+# 像素型设计值（圆角、间距、控件高度）必须跟着 DPI 一起放大，
+# 否则在 150% 屏幕上界面会显得又小又挤（字体是按 DPI 缩放的，控件却没缩）。
+_SCALE = 1.0
+
+
+def set_scale(scale: float) -> float:
+    """设置像素缩放系数（= 实际 DPI / 96）。建窗口前调用。"""
+    global _SCALE, PAD_CARD, GAP_SECTION, RADIUS_CARD, RADIUS_CTRL
+    _SCALE = max(1.0, float(scale))
+    PAD_CARD = S(12)
+    GAP_SECTION = S(8)
+    RADIUS_CARD = S(10)
+    RADIUS_CTRL = S(8)
+    return _SCALE
+
+
+def scale() -> float:
+    return _SCALE
+
+
+def S(px: float) -> int:
+    """把设计稿上的像素值换算成当前 DPI 下的整数像素（保证锐利、不半像素）。"""
+    return max(1, int(round(px * _SCALE)))
+
 # 语义色 → （底色, 描边, 文字色）
 TONES = {
     "info": (COLOR_PRIMARY_SOFT, COLOR_PRIMARY_SOFT_BORDER, COLOR_PRIMARY_TEXT),
@@ -77,19 +162,36 @@ TONES = {
 
 
 def draw_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill, outline="", width=1):
-    """在 Canvas 上画圆角矩形。
+    """在 Canvas 上画圆角矩形（**真实圆弧**拼成，纯 Tk，不需要 Pillow）。
 
-    实现：用 smooth=True 的多边形（每个角重复一个控制点）逼近圆角 ——
-    纯 Tk 即可，不需要 Pillow 生成图片，因此在打包后的 exe 里同样可用。
+    为什么不用 smooth 多边形（2026-09-29 改）：smooth=True 是样条逼近，
+    圆角不是真圆弧 —— 小尺寸下边框看着发毛、四角不够齐。改成
+    「4 段 arc + 2 个矩形」的精确画法，边框更锐利、四角更规整。
+
+    返回画出来的 item 列表（调用方需要时可以删除/置底）。
     """
-    r = max(1, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
-    pts = [
-        x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-        x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
-    ]
-    return cv.create_polygon(pts, smooth=True, splinesteps=12, fill=fill,
-                             outline=outline, width=width)
+    x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
+    r = max(1, min(float(r), (x2 - x1) / 2, (y2 - y1) / 2))
+    items = []
+    # 填充：中间两条矩形 + 四个 90° 扇形（扇形自带的两条半径线落在形状内部，看不见）
+    items.append(cv.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline=""))
+    items.append(cv.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline=""))
+    for cx, cy, start in ((x1 + r, y1 + r, 90), (x2 - r, y1 + r, 0),
+                          (x2 - r, y2 - r, 270), (x1 + r, y2 - r, 180)):
+        items.append(cv.create_arc(cx - r, cy - r, cx + r, cy + r, start=start, extent=90,
+                                   style="pieslice", fill=fill, outline=""))
+    if outline and width:
+        w = int(width)
+        # 描边：四条直线 + 四段圆弧（真圆弧，1px 细边也不会发毛）
+        items.append(cv.create_line(x1 + r, y1, x2 - r, y1, fill=outline, width=w))
+        items.append(cv.create_line(x1 + r, y2, x2 - r, y2, fill=outline, width=w))
+        items.append(cv.create_line(x1, y1 + r, x1, y2 - r, fill=outline, width=w))
+        items.append(cv.create_line(x2, y1 + r, x2, y2 - r, fill=outline, width=w))
+        for cx, cy, start in ((x1 + r, y1 + r, 90), (x2 - r, y1 + r, 0),
+                              (x2 - r, y2 - r, 270), (x1 + r, y2 - r, 180)):
+            items.append(cv.create_arc(cx - r, cy - r, cx + r, cy + r, start=start, extent=90,
+                                       style="arc", outline=outline, width=w))
+    return items
 
 
 class _CanvasBox(tk.Frame):
@@ -104,8 +206,8 @@ class _CanvasBox(tk.Frame):
         super().__init__(parent, bg=page_bg)
         self._fill = fill
         self._border = border
-        self._radius = radius
-        self._pad = pad
+        self._radius = S(radius)
+        self._pad = S(pad)
         self._page_bg = page_bg
         self._shadow = shadow
         # fit_width=True：宽度按内容收缩（胶囊标签、输入框外壳、浮动提醒小框用）；
@@ -170,8 +272,8 @@ class _CanvasBox(tk.Frame):
             return
         if self._shadow:
             # 轻阴影：只画一层 1px 偏移的浅灰，够暗示层次又不至于像描边
-            self._shapes.append(draw_round_rect(cv, 1, 2, w - 2, h - 2, self._radius, "#F0F1F4"))
-        self._shapes.append(draw_round_rect(cv, 1, 1, w - 2, h - 2, self._radius,
+            self._shapes.extend(draw_round_rect(cv, 1, 2, w - 2, h - 2, self._radius, "#F0F1F4"))
+        self._shapes.extend(draw_round_rect(cv, 1, 1, w - 2, h - 2, self._radius,
                                             self._fill, self._border))
         for item in self._shapes:      # 画在内容之下
             cv.tag_lower(item, self._win)
@@ -234,13 +336,23 @@ class RoundedButton(tk.Canvas):
     def __init__(self, parent, text="", command=None, kind="secondary", width=None,
                  height=28, radius=RADIUS_CTRL, padx=12, page_bg=COLOR_CARD,
                  font=UI_FONT, on=False):
-        measure = tkfont.Font(family="黑体", size=10)
-        w = width or (measure.measure(text) + 2 * padx)
-        super().__init__(parent, width=w, height=height, bg=page_bg, highlightthickness=0, bd=0)
+        height, padx = S(height), S(padx)
+        super().__init__(parent, width=S(width) if width else S(60), height=height,
+                         bg=page_bg, highlightthickness=0, bd=0)
         self._text = text
         self._command = command
         self._kind = kind
-        self._radius = radius
+        self._radius = S(radius)
+        # 文字宽度用**控件自己的 Tcl 解释器**量（font measure）。
+        # 不能用 tkinter.font.Font(...)：它走"默认 Tk 解释器"，在设置窗口这种
+        # 独立线程 + 多窗口场景下会抛 "main thread is not in main loop"
+        # （2026-09-29 模拟 150% 缩放时踩到）。
+        if width is None:
+            try:
+                need = int(self.tk.call("font", "measure", font, text)) + 2 * padx
+            except Exception:  # noqa: BLE001
+                need = S(72)
+            super().configure(width=max(need, S(40)))
         self._font = font
         self._on = on
         self._hover, self._pressed, self._disabled = False, False, False
@@ -356,7 +468,8 @@ class RoundedButton(tk.Canvas):
         w = int(self.winfo_reqwidth())
         h = int(self.winfo_reqheight())
         fill, border, fg = self._colors()
-        self._shapes.append(draw_round_rect(self, 1, 1, w - 1, h - 1, self._radius, fill, border))
+        self._shapes.extend(draw_round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, self._radius,
+                                            fill, border))
         self._shapes.append(self.create_text(w // 2, h // 2, text=self._text, fill=fg,
                                             font=self._font))
 
@@ -377,7 +490,7 @@ class SegmentGroup(tk.Frame):
             btn = RoundedButton(self, text=title, kind="segment", height=height, padx=padx,
                                 page_bg=page_bg,
                                 command=lambda v=value: self._choose(v))
-            btn.pack(side="left", padx=(0, 8))
+            btn.pack(side="left", padx=(0, S(8)))
             self._buttons[value] = btn
         self._on_change = on_change
         self._var.trace_add("write", lambda *_: self.refresh())
@@ -396,21 +509,47 @@ class SegmentGroup(tk.Frame):
 
 
 class ToggleSwitch(tk.Canvas):
-    """iOS 风格开关：点击切换 BooleanVar，并可触发回调。"""
+    """iOS 风格开关：点击切换 BooleanVar，并可触发回调。
+
+    清晰度（2026-09-29 改进）：真圆弧拼出的胶囊 + 白色旋钮带 1px 描边，
+    且开/关两态**颜色与旋钮位置都明显不同**，一眼能看出状态。
+    """
+
+    # 开：主色；关：中性灰（比原来更深一点，避免"灰得发白"看不清边界）
+    COLOR_ON = COLOR_PRIMARY
+    COLOR_ON_HOVER = COLOR_PRIMARY_HOVER
+    COLOR_OFF = "#C3CAD6"
+    COLOR_OFF_HOVER = "#B4BCC9"
+    COLOR_DISABLED_ON = "#A8C6F7"
+    COLOR_DISABLED_OFF = "#DFE3E9"
+    KNOB_BORDER = "#E2E5EA"
 
     def __init__(self, parent, variable, command=None, page_bg=COLOR_CARD,
-                 width=42, height=24):
-        super().__init__(parent, width=width, height=height, bg=page_bg,
+                 width=46, height=26):
+        w, h = S(width), S(height)
+        super().__init__(parent, width=w, height=h, bg=page_bg,
                          highlightthickness=0, bd=0)
         self._var = variable
         self._command = command
         self._disabled = False
+        self._hover = False
         # 注意：不能叫 _w —— tkinter 用 _w 保存控件的 Tcl 路径名，覆盖它会让所有
         # Tk 调用报 invalid command name（2026-09-29 踩过）
-        self._box_w, self._box_h = width, height
+        self._box_w, self._box_h = w, h
         self.bind("<Button-1>", self._toggle)
-        self.bind("<Enter>", lambda _e: self.configure(cursor="hand2"))
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
         self._var.trace_add("write", lambda *_: self._draw())
+        self._draw()
+
+    def _on_enter(self, _e=None) -> None:
+        self._hover = True
+        if not self._disabled:
+            self.configure(cursor="hand2")
+        self._draw()
+
+    def _on_leave(self, _e=None) -> None:
+        self._hover = False
         self._draw()
 
     def _toggle(self, _e=None) -> None:
@@ -431,19 +570,26 @@ class ToggleSwitch(tk.Canvas):
         self._draw()
         return ()
 
+    def _track_color(self, on: bool) -> str:
+        if self._disabled:
+            return self.COLOR_DISABLED_ON if on else self.COLOR_DISABLED_OFF
+        if on:
+            return self.COLOR_ON_HOVER if self._hover else self.COLOR_ON
+        return self.COLOR_OFF_HOVER if self._hover else self.COLOR_OFF
+
     def _draw(self) -> None:
         self.delete("all")
         on = bool(self._var.get())
         w, h = self._box_w, self._box_h
-        r = h / 2
-        fill = COLOR_PRIMARY if on else "#D1D5DB"
-        if self._disabled:
-            fill = "#E5E7EB" if not on else "#A5C4F5"
-        draw_round_rect(self, 1, 1, w - 1, h - 1, r - 1, fill)
-        knob_r = r - 3
-        cx = (w - r) if on else r
-        self.create_oval(cx - knob_r, h / 2 - knob_r, cx + knob_r, h / 2 + knob_r,
-                         fill="#FFFFFF", outline="")
+        # 胶囊轨道：真圆弧（半径 = 高度的一半）
+        draw_round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, h / 2, self._track_color(on))
+        # 白色旋钮 + 1px 描边（描边让旋钮边界在浅色轨道上也清楚）
+        inset = S(3)
+        knob_r = (h - 2 * inset) / 2
+        cx = (w - h / 2) if on else (h / 2)
+        cy = h / 2
+        self.create_oval(cx - knob_r, cy - knob_r, cx + knob_r, cy + knob_r,
+                         fill="#FFFFFF", outline=self.KNOB_BORDER, width=1)
 
 
 class IconBadge(tk.Canvas):
@@ -454,43 +600,59 @@ class IconBadge(tk.Canvas):
 
     def __init__(self, parent, kind, size=26, page_bg=COLOR_CARD,
                  tint=COLOR_PRIMARY_SOFT, color=COLOR_PRIMARY):
-        super().__init__(parent, width=size, height=size, bg=page_bg,
+        s = S(size)
+        super().__init__(parent, width=s, height=s, bg=page_bg,
                          highlightthickness=0, bd=0)
-        self._size = size
-        draw_round_rect(self, 0.5, 0.5, size - 0.5, size - 0.5, 7, tint)
-        self._draw_icon(kind, size, color)
+        self._size = s
+        draw_round_rect(self, 0.5, 0.5, s - 0.5, s - 0.5, S(7), tint)
+        self._draw_icon(kind, s, color)
 
     def _draw_icon(self, kind: str, s: int, color: str) -> None:
+        """图标按尺寸等比绘制（u = 单位长度），高 DPI 下自动放大不变形。"""
         c = color
-        w = 1.6
+        u = s / 26.0                      # 设计基准：26px
+        w = max(1, round(1.6 * u))
         cx = cy = s / 2
+
+        def px(v):
+            return round(v * u, 1)
+
         if kind == "models":                       # 下载箭头 + 托盘
-            self.create_line(cx, cy - 7, cx, cy + 2, fill=c, width=w, capstyle="round")
-            self.create_line(cx - 4, cy - 1, cx, cy + 3, cx + 4, cy - 1,
+            self.create_line(cx, cy - px(7), cx, cy + px(2),
+                             fill=c, width=w, capstyle="round")
+            self.create_line(cx - px(4), cy - px(1), cx, cy + px(3), cx + px(4), cy - px(1),
                              fill=c, width=w, capstyle="round", joinstyle="round")
-            self.create_line(cx - 6, cy + 6, cx + 6, cy + 6, fill=c, width=w, capstyle="round")
+            self.create_line(cx - px(6), cy + px(6), cx + px(6), cy + px(6),
+                             fill=c, width=w, capstyle="round")
         elif kind == "lang":                       # 地球
-            self.create_oval(cx - 7, cy - 7, cx + 7, cy + 7, outline=c, width=w)
-            self.create_line(cx - 7, cy, cx + 7, cy, fill=c, width=w)
-            self.create_oval(cx - 3.2, cy - 7, cx + 3.2, cy + 7, outline=c, width=w)
+            self.create_oval(cx - px(7), cy - px(7), cx + px(7), cy + px(7), outline=c, width=w)
+            self.create_line(cx - px(7), cy, cx + px(7), cy, fill=c, width=w)
+            self.create_oval(cx - px(3.2), cy - px(7), cx + px(3.2), cy + px(7),
+                             outline=c, width=w)
         elif kind == "speed":                      # 仪表盘
-            self.create_arc(cx - 7, cy - 6, cx + 7, cy + 8, start=20, extent=140,
+            self.create_arc(cx - px(7), cy - px(6), cx + px(7), cy + px(8), start=20, extent=140,
                             style="arc", outline=c, width=w)
-            self.create_line(cx, cy + 2, cx + 3.5, cy - 2, fill=c, width=w, capstyle="round")
+            self.create_line(cx, cy + px(2), cx + px(3.5), cy - px(2),
+                             fill=c, width=w, capstyle="round")
         elif kind == "memory":                     # 芯片
-            self.create_rectangle(cx - 5, cy - 5, cx + 5, cy + 5, outline=c, width=w)
+            self.create_rectangle(cx - px(5), cy - px(5), cx + px(5), cy + px(5),
+                                  outline=c, width=w)
             for d in (-3, 0, 3):
-                self.create_line(cx - 8, cy + d, cx - 5, cy + d, fill=c, width=w)
-                self.create_line(cx + 5, cy + d, cx + 8, cy + d, fill=c, width=w)
+                self.create_line(cx - px(8), cy + px(d), cx - px(5), cy + px(d), fill=c, width=w)
+                self.create_line(cx + px(5), cy + px(d), cx + px(8), cy + px(d), fill=c, width=w)
         elif kind == "hotkey":                     # 键盘
-            self.create_rectangle(cx - 8, cy - 5, cx + 8, cy + 5, outline=c, width=w)
+            self.create_rectangle(cx - px(8), cy - px(5), cx + px(8), cy + px(5),
+                                  outline=c, width=w)
             for d in (-4, 0, 4):
-                self.create_line(cx + d, cy - 1.5, cx + d, cy - 1.5, fill=c, width=w + 1)
-            self.create_line(cx - 4, cy + 3, cx + 4, cy + 3, fill=c, width=w)
+                self.create_line(cx + px(d), cy - px(1.5), cx + px(d), cy - px(1.5),
+                                 fill=c, width=w + 1)
+            self.create_line(cx - px(4), cy + px(3), cx + px(4), cy + px(3), fill=c, width=w)
         elif kind == "bell":                       # 铃铛（通知）
-            self.create_arc(cx - 6, cy - 7, cx + 6, cy + 5, start=0, extent=180,
+            self.create_arc(cx - px(6), cy - px(7), cx + px(6), cy + px(5), start=0, extent=180,
                             style="arc", outline=c, width=w)
-            self.create_line(cx - 6, cy - 1, cx - 6, cy + 4, fill=c, width=w)
-            self.create_line(cx + 6, cy - 1, cx + 6, cy + 4, fill=c, width=w)
-            self.create_line(cx - 7, cy + 4, cx + 7, cy + 4, fill=c, width=w, capstyle="round")
-            self.create_oval(cx - 1.6, cy + 6, cx + 1.6, cy + 9, fill=c, outline="")
+            self.create_line(cx - px(6), cy - px(1), cx - px(6), cy + px(4), fill=c, width=w)
+            self.create_line(cx + px(6), cy - px(1), cx + px(6), cy + px(4), fill=c, width=w)
+            self.create_line(cx - px(7), cy + px(4), cx + px(7), cy + px(4),
+                             fill=c, width=w, capstyle="round")
+            self.create_oval(cx - px(1.6), cy + px(6), cx + px(1.6), cy + px(9),
+                             fill=c, outline="")

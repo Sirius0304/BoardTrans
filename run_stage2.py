@@ -29,8 +29,14 @@ from app.tray import TrayApp                                 # noqa: E402
 
 
 def main() -> int:
+    # 0) 先声明 DPI 感知：必须在创建任何窗口（托盘/设置窗口）之前调用，
+    #    否则 Windows 会把界面位图整体拉伸，文字和控件都会发虚。
+    from app import ui_kit as ui                             # noqa: E402
+    aware = ui.enable_dpi_awareness()
+
     safe_print("瞬译 正在启动...")
     safe_print("  数据目录: " + paths.data_dir())
+    safe_print("  高 DPI 适配: " + aware)
 
     # 1) 全局热键 + 翻译服务（原有能力，未做破坏性改动）
     service = HotkeyService()
