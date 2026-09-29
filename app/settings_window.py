@@ -197,7 +197,6 @@ class SettingsWindow:
         self._dl_samples: dict[str, dict] = {}
         self._model_status: dict[str, dict] = {}
         self._last_config_snapshot: tuple | None = None
-        self._section_wrappers: list = []        # 各区块容器，用于定位提示条的插入位置
 
     # ---------------------------------------------------------- 对外接口
 
@@ -338,7 +337,7 @@ class SettingsWindow:
         tk.Label(header, text="在这里管理翻译模型、翻译档位和快捷键；点「保存」后立即生效。",
                  bg=COLOR_BG, fg=COLOR_SUBTEXT, font="ShunYiSmall").pack(anchor="w", pady=(2, 0))
 
-        # 未保存提示条
+        # 未保存提示条（常驻型，贴在窗口底部、按钮行上方；见 _update_dirty_bar）
         self._dirty_bar = tk.Frame(outer, bg=COLOR_WARN_BG)
         self._dirty_label = tk.Label(self._dirty_bar, text="", bg=COLOR_WARN_BG, fg=COLOR_WARN_FG,
                                      font="ShunYiSmall", anchor="w", justify="left")
@@ -374,7 +373,6 @@ class SettingsWindow:
         """创建一个白色卡片容器（带内边距与标题），并把外层容器登记下来。"""
         wrapper = tk.Frame(parent, bg=COLOR_BG)
         wrapper.pack(fill="x", padx=18, pady=(0, 12))
-        self._section_wrappers.append(wrapper)
         card = tk.Frame(wrapper, bg=COLOR_CARD, highlightbackground="#E3E5E9", highlightthickness=1)
         card.pack(fill="x")
         tk.Label(card, text=title, bg=COLOR_CARD, fg=COLOR_TEXT, font="ShunYiTitle").pack(anchor="w", padx=14, pady=(12, 6))
@@ -619,10 +617,35 @@ class SettingsWindow:
         self._load_from_config(force=True)
         self._refresh_models()
 
+    def _pending_values(self) -> tuple:
+        """界面上待保存的三项设置（快捷键 / 档位 / 内存优化的分钟数）。"""
+        return (str(self._pending_hotkey or DEFAULT_HOTKEY),
+                str(self._quality_var.get() or "fast"),
+                15 if self._idle_unload_var.get() else 0)
+
+    def _saved_values(self) -> tuple:
+        """配置文件里当前真正生效的三项设置。"""
+        cfg = config.load()
+        return (str(cfg.get("hotkey") or DEFAULT_HOTKEY),
+                str(cfg.get("quality") or "fast"),
+                int(cfg.get("idle_unload_minutes", 0) or 0))
+
+    def _values_changed(self) -> bool:
+        """界面上的值是否真的和已保存的值不一致。"""
+        return self._pending_values() != self._saved_values()
+
     def _mark_dirty(self) -> None:
+        """用户动了控件后调用：**按实际值重新判定**要不要提示"未保存"。
+
+        为什么是"重新比较"而不是"置位后不再撤销"（2026-09-28 实测缺陷）：
+        有两类"看着动了、其实没改"的操作会误报未保存：
+          1) 点已经选中的那个选项 —— 单选按钮的 command 照样会触发；
+          2) 改到别的选项后又切回原值 —— 净变化为零。
+        这两种情况下界面值和配置值完全一致，不该提示"未保存"。
+        """
         if self._syncing:
             return
-        self._dirty = True
+        self._dirty = self._values_changed()
         self._update_dirty_bar()
 
     def _on_memory_change(self) -> None:
@@ -638,24 +661,22 @@ class SettingsWindow:
         self._pending_quality = self._quality_var.get()
         self._mark_dirty()
 
-    def _pack_hint_bar(self, bar) -> None:
-        """把一条提示条插到第一个区块之前（before 必须指向已经 pack 过的控件）。"""
-        if bar.winfo_manager():
-            return
-        if self._section_wrappers:
-            bar.pack(fill="x", padx=18, pady=(0, 10), before=self._section_wrappers[0])
-        else:
-            bar.pack(fill="x", padx=18, pady=(0, 10))
-
     def _update_dirty_bar(self) -> None:
-        """显示/隐藏"有未保存修改"的提示条。"""
+        """显示/隐藏"有未保存修改"的提示条。
+
+        位置：窗口**底部**（贴在「恢复默认设置 / 取消 / 保存」按钮行正上方）。
+        与"保存结果小框"的区别：这条是**常驻**的（直到保存或取消），
+        所以用 pack 占住版面，而不是浮在内容上，避免长时间盖住下面的卡片。
+        """
         if self._dirty:
             cfg = config.load()
             live_q = {"fast": "高速度", "quality": "高质量"}.get(cfg.get("quality"), cfg.get("quality"))
             text = (f"有未保存的修改。当前实际生效的是：快捷键 {format_hotkey(cfg.get('hotkey'))}"
                     f"、档位 {live_q}。点「保存」后生效。")
             self._dirty_label.configure(text=text)
-            self._pack_hint_bar(self._dirty_bar)
+            if not self._dirty_bar.winfo_manager():
+                # side="bottom"：footer 先占最底部，这条随后占它上方
+                self._dirty_bar.pack(fill="x", side="bottom", padx=18, pady=(0, 8))
         else:
             self._dirty_bar.pack_forget()
 
@@ -699,7 +720,9 @@ class SettingsWindow:
 
         self._notice_box.configure(bg=bg)
         self._notice_label.configure(text=text, bg=bg, fg=fg)
-        # 贴在窗口底部：横向居中、纵向位于底部按钮行上方（小框底边锚定）
+        # 贴在窗口底部：横向居中、纵向位于底部按钮行上方（小框底边锚定）。
+        # 说明：调用本方法时"未保存提示条"必然已收起（三条保存路径都会先把
+        # 未保存状态清掉），所以这里只需按按钮行高度让位，不会与它重叠。
         offset = 12
         try:
             offset = max(12, self._footer.winfo_reqheight() + 12)
