@@ -55,6 +55,13 @@ class AutoAnswer:
         return None
 
 
+def _walk_all(widget):
+    """递归遍历所有子控件。"""
+    yield widget
+    for child in widget.winfo_children():
+        yield from _walk_all(child)
+
+
 def main():
     print("\n=== A. 进程 DPI 感知（发虚的头号原因）===")
     level = ui.enable_dpi_awareness()
@@ -105,16 +112,15 @@ def main():
             for state in (True, False):
                 var.set(state)
                 toggle._draw()
-                fills = [toggle.itemcget(i, "fill") for i in toggle.find_all()
-                         if toggle.type(i) in ("arc", "rectangle")]
-                ovals = [i for i in toggle.find_all() if toggle.type(i) == "oval"]
-                knob = ovals[0] if ovals else None
+                # 直接读控件记录的绘制状态：两种渲染路径（超采样图片 / 矢量）都适用，
+                # 不依赖画布 item 的类型（图片路径下没有 fill 项可读）
                 toggle_state[state] = {
-                    "track": next((f for f in fills if f and f != ""), ""),
-                    "knob_x": (toggle.coords(knob)[0] + toggle.coords(knob)[2]) / 2 if knob else None,
-                    "knob_fill": toggle.itemcget(knob, "fill") if knob else "",
-                    "knob_outline": toggle.itemcget(knob, "outline") if knob else "",
+                    "track": toggle.track_color,
+                    "knob_x": toggle.knob_center_x,
+                    "knob_fill": toggle.knob_fill,
+                    "knob_outline": toggle.knob_outline,
                     "arc_items": sum(1 for i in toggle.find_all() if toggle.type(i) == "arc"),
+                    "image_items": sum(1 for i in toggle.find_all() if toggle.type(i) == "image"),
                 }
             var.set(True)
         # 卡片：圆角是否为真圆弧（存在 arc 项、且没有 smooth 多边形）
@@ -127,6 +133,7 @@ def main():
         if card_canvas is not None:
             card_info = {
                 "arcs": sum(1 for i in card_canvas.find_all() if card_canvas.type(i) == "arc"),
+                "images": sum(1 for i in card_canvas.find_all() if card_canvas.type(i) == "image"),
                 "polygons": sum(1 for i in card_canvas.find_all()
                                 if card_canvas.type(i) == "polygon"),
                 "width": card_canvas.winfo_width(),
@@ -178,14 +185,18 @@ def main():
         check("旋钮为白色且带 1px 描边（边界清楚）",
               on["knob_fill"] == "#FFFFFF" and bool(on["knob_outline"]),
               f"填充={on['knob_fill']} 描边={on['knob_outline']}")
-        check("轨道用真圆弧绘制（不是样条逼近）", on["arc_items"] >= 2,
-              f"arc 项={on['arc_items']}")
+        # 渲染路径二选一：超采样图片（抗锯齿）或矢量真圆弧；两者都是合格实现
+        check("开关采用合格渲染路径（超采样图片或真圆弧）",
+              on.get("image_items", 0) >= 1 or on["arc_items"] >= 2,
+              f"图片项={on.get('image_items', 0)} arc 项={on['arc_items']}")
 
     print("\n=== D. 圆角用真圆弧（边角不发毛）===")
     card = data.get("card", {})
     check("卡片画布存在", bool(card))
     if card:
-        check("圆角由圆弧构成", card["arcs"] >= 4, f"arc 项={card['arcs']}")
+        check("卡片圆角走合格渲染路径（超采样图片或真圆弧）",
+              card.get("images", 0) >= 1 or card["arcs"] >= 4,
+              f"图片项={card.get('images', 0)} arc 项={card['arcs']}")
         check("不再使用 smooth 多边形（旧的发毛画法）", card["polygons"] == 0,
               f"polygon 项={card['polygons']}")
         check("卡片有实际尺寸（内容可见、未被裁剪）",
@@ -388,12 +399,8 @@ def main():
                     if any(isinstance(v, float) and v != int(v) for v in coords):
                         bad_coords.append((type(w).__name__, cv.type(item)))
                 if isinstance(w, ui.IconBadge):
-                    for item in cv.find_all():
-                        try:
-                            if cv.type(item) == "line":
-                                icon_strokes.append(int(float(cv.itemcget(item, "width"))))
-                        except Exception:  # noqa: BLE001
-                            pass
+                    # 直接读控件记录的笔画宽度：超采样路径下图元是整张图片，没有 line 项可读
+                    icon_strokes.append(int(getattr(w, "stroke_width", 0)))
         audit["bad_coords"] = bad_coords
         audit["icon_min_stroke"] = min(icon_strokes) if icon_strokes else 0
         audit["n_components"] = len(canvases)
@@ -412,6 +419,75 @@ def main():
           diff_border >= 25, f"描边色 {ui.COLOR_BORDER}")
     check(f"图标笔画 ≥ 2px（实测最小 {audit.get('icon_min_stroke', 0)}px）",
           audit.get("icon_min_stroke", 0) >= 2, f"{audit.get('icon_min_stroke')}px")
+
+    print("\n=== I. 超采样渲染实测（曲线抗锯齿 + 直线仍锐利）===")
+    # 目标：圆角/斜线获得 1px 平滑过渡（不再是一格一格的硬阶梯），
+    # 而水平/垂直的 1px 边框仍落在整像素上（不会变灰变虚）。
+    try:
+        from PIL import ImageGrab                     # noqa: PLC0415
+        probe = {}
+
+        def _collect_card():
+            root_w = settings.root
+            root_w.attributes("-topmost", True)
+            root_w.lift()
+            root_w.update_idletasks()
+            for w in _walk_all(root_w):
+                if isinstance(w, ui.RoundedCard):
+                    probe["card"] = (w.winfo_rootx(), w.winfo_rooty(),
+                                     w.winfo_width(), w.winfo_height())
+                    break
+            probe["origin"] = (root_w.winfo_rootx(), root_w.winfo_rooty())
+
+        settings._queue.put(("call", _collect_card))
+        time.sleep(1.0)
+        if not probe.get("card"):
+            print("      ⚠ 跳过（未取到卡片位置）")
+        else:
+            cx, cy, _cw, _ch = probe["card"]
+            ox, oy = probe["origin"]
+            img = ImageGrab.grab(bbox=(ox, oy, ox + 540, oy + 720)).convert("RGB")
+
+            def _intermediate_count(crop, a, b):
+                """统计介于 a、b 两色之间的过渡像素数（抗锯齿的证据）。"""
+                def lum(c):
+                    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+                la, lb = lum(a), lum(b)
+                lo, hi = min(la, lb), max(la, lb)
+                t_lo, t_hi = lo + 0.25 * (hi - lo), lo + 0.75 * (hi - lo)
+                px = crop.load()
+                return sum(1 for j in range(crop.height) for i in range(crop.width)
+                           if t_lo < lum(px[i, j]) < t_hi)
+
+            border_rgb = tuple(int(ui.COLOR_BORDER.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+            page_rgb = tuple(int(ui.COLOR_PAGE.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+            corner = img.crop((cx - ox, cy - oy, cx - ox + 22, cy - oy + 22))
+            n_corner = _intermediate_count(corner, border_rgb, page_rgb)
+            if ui.HAS_PIL:
+                check(f"圆角曲线有抗锯齿过渡（实测过渡像素 {n_corner} 个）", n_corner >= 6,
+                      "超采样渲染应在曲线处留下 1px 平滑过渡")
+            else:
+                print(f"      参考：矢量兜底模式，曲线过渡像素 {n_corner} 个（无抗锯齿）")
+
+            # 直线边框：在卡片上边附近**扫描**出最暗的那一行（不靠固定偏移，避免测错位置），
+            # 再判断它是"硬 1px"还是被摊成多层灰。
+            strip = img.crop((cx - ox + 40, cy - oy - 1, cx - ox + 80, cy - oy + 7))
+            px = strip.load()
+            rows = [[sum(px[i, j]) / 3 for i in range(strip.width)] for j in range(strip.height)]
+            means = [sum(r) / len(r) for r in rows]
+            darkest = min(range(len(means)), key=lambda j: means[j])
+            border_lum = means[darkest]
+            page_lum = max(means)
+            check(f"直线边框对比明显（边框 {border_lum:.0f} vs 背景 {page_lum:.0f}，"
+                  f"差 {page_lum - border_lum:.0f}）",
+                  page_lum - border_lum >= 20,
+                  f"描边色 {ui.COLOR_BORDER}，最暗行=第 {darkest} 行")
+            soft_rows = sum(1 for v in means if border_lum + 12 < v < page_lum - 12)
+            check(f"直线边框保持硬边（半调行数 {soft_rows} ≤ 2）", soft_rows <= 2,
+                  "1px 直线不应被抗锯齿摊成多层灰")
+        settings._queue.put(("call", lambda: settings.root.attributes("-topmost", False)))
+    except ImportError:
+        print("      ⚠ 跳过（缺少 Pillow）")
 
     settings.shutdown()
     time.sleep(0.5)
@@ -455,9 +531,14 @@ def main():
             holder2["toggle_w"] = tog.winfo_reqwidth() if tog else 0
             holder2["sw"] = root.winfo_screenwidth()
 
-        if settings2.root is not None:
+        # 轮询等待第二个窗口就绪并取回数据：150% 下组件尺寸 ×1.5、首次渲染更慢，
+        # 固定 sleep 会不够（曾因此误判为"缩放未生效"）
+        for _ in range(24):
             settings2._queue.put(("call", collect2))
-            time.sleep(1.2)
+            time.sleep(0.5)
+            if holder2.get("scale") is not None:
+                break
+        if settings2.root is not None:
             check("150% 下缩放系数 = 1.5", abs(holder2.get("scale", 0) - 1.5) < 0.02,
                   str(holder2.get("scale")))
             check("150% 下基准字号按 DPI 放大为 20px",

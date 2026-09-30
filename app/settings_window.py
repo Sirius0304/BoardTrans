@@ -389,6 +389,7 @@ class SettingsWindow:
             except tk.TclError:
                 continue
         log.info("设置窗口 ttk 主题: %s（字体: %s）", theme_used or "默认", family)
+        log.info("界面渲染模式: %s", ui.AA_MODE)
 
         # 先给所有 ttk 控件兜底字体；按钮/开关/分段选择器已改用 ui_kit 自绘控件，
         # 这里保留的 ttk 样式主要服务：输入框、进度条、滚动条、下拉框（防将来新增）。

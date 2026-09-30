@@ -83,8 +83,28 @@ settings.shutdown()
 time.sleep(0.4)
 config.update(**{k: original[k] for k in original})
 
-# 裁剪 + 6 倍放大 + 拼图
 tiles = []
+# 追加"渲染分辨率对比"：同一形状在 1×（硬阶梯）与 3× 超采样降采样后的差别
+from PIL import ImageDraw as _ID                              # noqa: E402
+from app import ui_kit as _ui                                 # noqa: E402
+
+if _ui.HAS_PIL:
+    def _rounded(scale, size=(120, 64), r=14):
+        img = Image.new("RGBA", (size[0] * scale, size[1] * scale), (247, 248, 250, 255))
+        dr = _ID.Draw(img)
+        dr.rounded_rectangle([0, 0, size[0] * scale - 1, size[1] * scale - 1],
+                             radius=r * scale, fill=(255, 255, 255, 255),
+                             outline=(217, 222, 229, 255), width=max(1, scale))
+        cx, cy, rad = size[0] * scale * 0.72, size[1] * scale * 0.5, size[1] * scale * 0.22
+        dr.ellipse([cx - rad, cy - rad, cx + rad, cy + rad], fill=(59, 130, 246, 255))
+        return img.resize(size, Image.BOX) if scale > 1 else img
+
+    tiles.append(("渲染分辨率对比：1× 直绘（硬阶梯）",
+                  _rounded(1).resize((720, 384), Image.NEAREST)))
+    tiles.append((f"渲染分辨率对比：{_ui.SUPERSAMPLE}× 超采样降采样（抗锯齿）",
+                  _rounded(_ui.SUPERSAMPLE).resize((720, 384), Image.NEAREST)))
+
+# 裁剪 + 6 倍放大 + 拼图
 for name, (x, y, w, h) in shot["regions"].items():
     crop = img.crop((x - ox, y - oy, x - ox + w, y - oy + h)).convert("RGB")
     crop = crop.resize((crop.width * 6, crop.height * 6), Image.NEAREST)

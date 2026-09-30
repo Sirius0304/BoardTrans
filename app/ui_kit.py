@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
+import base64
 import ctypes
+import io
 import sys
 import tkinter as tk
 
@@ -161,8 +163,197 @@ TONES = {
 }
 
 
+# --------------------------------------------- 超采样渲染（真正提高"渲染分辨率"）
+# Tk 画布不做抗锯齿 → 圆角与斜线是硬阶梯（放大看是"毛边"）。这里的做法是：
+# 用 Pillow 在 SUPERSAMPLE 倍分辨率下绘制，再 LANCZOS 降采样成画布背景图 ——
+# 曲线/斜线因此获得 1px 平滑过渡（锐利而不毛），而水平/垂直的 1px 边框
+# 仍然落在整像素上（不会变灰变虚）。Pillow 不可用时自动退回纯 Tk 矢量画法。
+try:
+    from PIL import Image, ImageDraw, ImageFilter
+    HAS_PIL = True
+except Exception:  # noqa: BLE001
+    HAS_PIL = False
+
+SUPERSAMPLE = 3                    # 超采样倍数（3× ≈ 每像素 9 个采样点；4× 单次耗时翻倍）
+AA_MODE = ("超采样 %d× 降采样（抗锯齿）" % SUPERSAMPLE) if HAS_PIL else "矢量硬边（无 Pillow 兜底）"
+
+# 渲染缓存：同一 (尺寸, 圆角, 底色, 描边, 阴影) 只渲染一次。
+# 为什么必须缓存（2026-09-30 实测）：4× 超采样 + 降采样 + PNG 编码约 30~130ms/组件，
+# 窗口一次性构建十几个组件时会拖慢 UI 线程（心跳日志里出现过 1276ms 慢轮警告）。
+_RENDER_CACHE: dict = {}
+_RENDER_CACHE_MAX = 96
+
+
+def _cached_png(key, build_image):
+    """带缓存生成 PNG 字节。
+
+    为什么缓存字节而不是 PhotoImage（2026-09-30 实测踩过）：PhotoImage 绑定在**某个 Tk
+    解释器**上，模块级长期持有它跨窗口/跨线程复用会失效 —— 表现为第二个窗口构建失败、
+    线程静默退出，并在 GC 时抛 "main thread is not in main loop"。PNG 字节是纯数据，
+    与解释器无关，可安全复用；每张图只在需要时用**当前控件所属解释器**创建。
+    """
+    hit = _RENDER_CACHE.get(key)
+    if hit is not None:
+        return hit
+    img = build_image()
+    if img is None:
+        return None
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    data = buf.getvalue()
+    if len(_RENDER_CACHE) >= _RENDER_CACHE_MAX:
+        for old_key in list(_RENDER_CACHE)[: _RENDER_CACHE_MAX // 2]:
+            _RENDER_CACHE.pop(old_key, None)
+    _RENDER_CACHE[key] = data
+    return data
+
+
+def render_stats() -> dict:
+    """渲染缓存统计（自检用）。"""
+    return {"cached": len(_RENDER_CACHE), "ss": SUPERSAMPLE, "pil": HAS_PIL}
+
+
+def _make_photo(master, data):
+    """用 master 所属的 Tk 解释器创建 PhotoImage（必须传 master，不能用默认解释器）。"""
+    if not data:
+        return None
+    try:
+        return tk.PhotoImage(master=master, data=base64.b64encode(data))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def render_round_rect(master, w, h, radius, fill, outline="", width=1, shadow=None):
+    """超采样渲染圆角矩形 → PhotoImage（不可用/失败时返回 None 走矢量兜底）。"""
+    if not HAS_PIL or w < 2 or h < 2:
+        return None
+    key = ("rect", int(w), int(h), int(radius), fill, outline, width, shadow)
+    data = _cached_png(key, lambda: _draw_round_rect_image(w, h, radius, fill, outline,
+                                                           width, shadow))
+    return _make_photo(master, data)
+
+
+def _draw_round_rect_image(w, h, radius, fill, outline="", width=1, shadow=None):
+    ss = SUPERSAMPLE
+    W, H = int(w) * ss, int(h) * ss
+    r = max(1, int(min(radius, (w - 1) / 2, (h - 1) / 2))) * ss
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    if shadow:
+        # 阴影先模糊再叠底：模糊半径按超采样等比放大，降采样后正好是细腻的柔和投影
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(layer).rounded_rectangle([0, ss, W - 1, H - 1], radius=r, fill=shadow)
+        img.alpha_composite(layer.filter(ImageFilter.GaussianBlur(ss * 1.2)))
+    if outline:
+        # 1px 描边：外圈画描边色、内圈内缩 width 像素画底色 → 降采样后恰好 1px
+        draw.rounded_rectangle([0, 0, W - 1, H - 1], radius=r, fill=outline)
+        inset = max(1, int(round(width))) * ss
+        draw.rounded_rectangle([inset, inset, W - 1 - inset, H - 1 - inset],
+                               radius=max(0, r - inset), fill=fill)
+    else:
+        draw.rounded_rectangle([0, 0, W - 1, H - 1], radius=r, fill=fill)
+    # 整数倍超采样下用 BOX（3×3 均值）等价于理论上的超采样平均，且比 LANCZOS 快得多
+    return img.resize((int(w), int(h)), Image.BOX)
+
+
+def render_toggle(master, w, h, track, knob, knob_border, kx1, ky1, kx2, ky2, radius):
+    """超采样渲染开关（胶囊轨道 + 圆旋钮 + 旋钮 1px 描边）。"""
+    if not HAS_PIL or w < 2 or h < 2:
+        return None
+    key = ("toggle", int(w), int(h), track, knob, knob_border,
+           int(kx1), int(ky1), int(kx2), int(ky2), int(radius))
+    data = _cached_png(key, lambda: _draw_toggle_image(w, h, track, knob, knob_border,
+                                                       kx1, ky1, kx2, ky2, radius))
+    return _make_photo(master, data)
+
+
+def _draw_toggle_image(w, h, track, knob, knob_border, kx1, ky1, kx2, ky2, radius):
+    ss = SUPERSAMPLE
+    W, H = int(w) * ss, int(h) * ss
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    r = max(1, int(radius)) * ss
+    draw.rounded_rectangle([0, 0, W - 1, H - 1], radius=r, fill=track)
+    box = [int(kx1) * ss, int(ky1) * ss, int(kx2) * ss, int(ky2) * ss]
+    draw.ellipse(box, fill=knob, outline=knob_border, width=ss)
+    return img.resize((int(w), int(h)), Image.BOX)
+
+
+def _pil_line(draw, x1, y1, x2, y2, width, color, ss, round_caps=True):
+    """画线并在两端补圆点（PIL 的 line 没有圆头，补两个小圆模拟）。"""
+    draw.line([x1 * ss, y1 * ss, x2 * ss, y2 * ss], fill=color, width=width * ss)
+    if round_caps and width > 1:
+        rr = width * ss / 2
+        for px, py in ((x1, y1), (x2, y2)):
+            draw.ellipse([px * ss - rr, py * ss - rr, px * ss + rr, py * ss + rr], fill=color)
+
+
+def render_icon_badge(master, kind, s, tint, color, radius):
+    """超采样渲染图标徽标（浅色圆角底 + 图标线条），斜线/圆弧获得抗锯齿边缘。"""
+    if not HAS_PIL or s < 8:
+        return None
+    key = ("icon", kind, int(s), tint, color, int(radius))
+    data = _cached_png(key, lambda: _draw_icon_image(kind, s, tint, color, radius))
+    return _make_photo(master, data)
+
+
+def _draw_icon_image(kind, s, tint, color, radius):
+    ss = SUPERSAMPLE
+    S_ = int(s) * ss
+    img = Image.new("RGBA", (S_, S_), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle([0, 0, S_ - 1, S_ - 1], radius=max(1, int(radius)) * ss, fill=tint)
+    u = s / 26.0                       # 设计基准 26px
+    w = max(2, int(round(2.0 * u)))    # 笔画至少 2px
+    cx = cy = s / 2
+
+    def X(v):                          # 相对中心 → 绝对坐标（设计单位）
+        return round(cx + v * u, 2)
+
+    def Y(v):
+        return round(cy + v * u, 2)
+
+    def line(x1, y1, x2, y2, lw=None):
+        _pil_line(draw, x1, y1, x2, y2, lw or w, color, ss)
+
+    if kind == "models":                          # 下载箭头 + 托盘
+        line(cx, Y(-7), cx, Y(2))
+        line(X(-4), Y(-1), cx, Y(3))
+        line(cx, Y(3), X(4), Y(-1))
+        line(X(-6), Y(6), X(6), Y(6))
+    elif kind == "lang":                          # 地球
+        draw.ellipse([X(-7) * ss, Y(-7) * ss, X(7) * ss, Y(7) * ss], outline=color, width=w * ss)
+        line(X(-7), cy, X(7), cy)
+        draw.ellipse([X(-3.2) * ss, Y(-7) * ss, X(3.2) * ss, Y(7) * ss], outline=color, width=w * ss)
+    elif kind == "speed":                         # 仪表盘
+        draw.arc([X(-7) * ss, Y(-6) * ss, X(7) * ss, Y(8) * ss],
+                 start=20 - 140, end=20, fill=color, width=w * ss)
+        line(cx, Y(2), X(3.5), Y(-2))
+    elif kind == "memory":                        # 芯片
+        draw.rectangle([X(-5) * ss, Y(-5) * ss, X(5) * ss, Y(5) * ss], outline=color, width=w * ss)
+        for off in (-3, 0, 3):
+            line(X(-8), Y(off), X(-5), Y(off))
+            line(X(5), Y(off), X(8), Y(off))
+    elif kind == "hotkey":                        # 键盘
+        draw.rectangle([X(-8) * ss, Y(-5) * ss, X(8) * ss, Y(5) * ss], outline=color, width=w * ss)
+        for off in (-4, 0, 4):
+            draw.ellipse([X(off) * ss - w, Y(-1.5) * ss - w,
+                          X(off) * ss + w, Y(-1.5) * ss + w], fill=color)
+        line(X(-4), Y(3), X(4), Y(3))
+    elif kind == "bell":                          # 铃铛
+        draw.arc([X(-6) * ss, Y(-7) * ss, X(6) * ss, Y(5) * ss],
+                 start=0 - 180, end=0, fill=color, width=w * ss)
+        line(X(-6), Y(-1), X(-6), Y(4))
+        line(X(6), Y(-1), X(6), Y(4))
+        line(X(-7), Y(4), X(7), Y(4))
+        draw.ellipse([X(-1.6) * ss, Y(6) * ss, X(1.6) * ss, Y(9) * ss], fill=color)
+    return img.resize((int(s), int(s)), Image.BOX)
+
+
+
 def draw_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill, outline="", width=1):
-    """在 Canvas 上画圆角矩形（**真实圆弧**拼成，纯 Tk，不需要 Pillow）。
+    """在 Canvas 上画圆角矩形（**真实圆弧**拼成，纯 Tk 兜底路径）。
+
 
     为什么不用 smooth 多边形（2026-09-29 改）：smooth=True 是样条逼近，
     圆角不是真圆弧 —— 小尺寸下边框看着发毛、四角不够齐。改成
@@ -288,12 +479,19 @@ class _CanvasBox(tk.Frame):
         self._shapes = []
         if w <= 2 or h <= 2:
             return
-        if self._shadow:
-            # 轻阴影：贴着卡片下缘/右缘各露出 1px 的浅灰（比"整圈偏移的灰底"干净，
-            # 不会产生灰蒙蒙的晕边）
-            self._shapes.extend(draw_round_rect(cv, 1, 2, w - 1, h - 1, self._radius, "#E7EAEF"))
-        self._shapes.extend(draw_round_rect(cv, 1, 1, w - 2, h - 2, self._radius,
-                                            self._fill, self._border))
+        # 优先用超采样渲染的背景图（曲线抗锯齿、直线仍是硬 1px）；
+        # Pillow 不可用或渲染失败时退回矢量画法（效果略毛但功能一致）
+        photo = render_round_rect(
+            cv, w, h, self._radius, self._fill, self._border,
+            shadow=("#E7EAEF" if self._shadow else None))
+        if photo is not None:
+            self._photo = photo                     # 必须持有引用，否则图片会被回收
+            self._shapes.append(cv.create_image(0, 0, image=photo, anchor="nw"))
+        else:
+            if self._shadow:
+                self._shapes.extend(draw_round_rect(cv, 1, 2, w - 1, h - 1, self._radius, "#E7EAEF"))
+            self._shapes.extend(draw_round_rect(cv, 1, 1, w - 2, h - 2, self._radius,
+                                                self._fill, self._border))
         for item in self._shapes:      # 画在内容之下
             cv.tag_lower(item, self._win)
 
@@ -488,8 +686,13 @@ class RoundedButton(tk.Canvas):
         h = int(self.winfo_reqheight())
         fill, border, fg = self._colors()
         # 坐标取整数像素：1px 描边落在整像素行/列上才锐利（半像素会让线摊成两层灰）
-        self._shapes.extend(draw_round_rect(self, 1, 1, w - 2, h - 2, self._radius,
-                                            fill, border))
+        photo = render_round_rect(self, w, h, self._radius, fill, border)
+        if photo is not None:
+            self._photo = photo
+            self._shapes.append(self.create_image(0, 0, image=photo, anchor="nw"))
+        else:
+            self._shapes.extend(draw_round_rect(self, 1, 1, w - 2, h - 2, self._radius,
+                                                fill, border))
         self._shapes.append(self.create_text(w // 2, h // 2, text=self._text, fill=fg,
                                             font=self._font))
 
@@ -603,9 +806,6 @@ class ToggleSwitch(tk.Canvas):
         self.delete("all")
         on = bool(self._var.get())
         w, h = self._box_w, self._box_h
-        # 胶囊轨道：真圆弧（半径 = (h-2)/2，h 为偶数时是整数），整像素对齐
-        draw_round_rect(self, 1, 1, w - 2, h - 2, (h - 2) // 2, self._track_color(on))
-        # 白色旋钮 + 1px 描边（描边让旋钮边界在浅色轨道上也清楚）
         inset = S(3)
         knob_d = h - 2 - 2 * inset        # 旋钮直径（整数）
         if knob_d % 2:
@@ -613,9 +813,23 @@ class ToggleSwitch(tk.Canvas):
         knob_r = knob_d / 2
         cx = (w - 1 - inset - knob_r) if on else (1 + inset + knob_r)
         cy = h / 2
-        self.create_oval(int(cx - knob_r), int(cy - knob_r),
-                         int(cx + knob_r), int(cy + knob_r),
-                         fill="#FFFFFF", outline=self.KNOB_BORDER, width=1)
+        # 记录本次绘制状态：两种渲染路径下自检脚本都能查到（不依赖画布 item 类型）
+        track_color = self._track_color(on)
+        self.track_color = track_color
+        self.knob_center_x = cx
+        self.knob_fill, self.knob_outline = "#FFFFFF", self.KNOB_BORDER
+        # 轨道 + 旋钮一起超采样渲染（胶囊两端与圆旋钮都获得抗锯齿边缘）
+        photo = render_toggle(self, w, h, track_color, "#FFFFFF", self.KNOB_BORDER,
+                             int(cx - knob_r), int(cy - knob_r),
+                             int(cx + knob_r), int(cy + knob_r), (h - 2) // 2)
+        if photo is not None:
+            self._photo = photo
+            self.create_image(0, 0, image=photo, anchor="nw")
+        else:
+            draw_round_rect(self, 1, 1, w - 2, h - 2, (h - 2) // 2, self._track_color(on))
+            self.create_oval(int(cx - knob_r), int(cy - knob_r),
+                             int(cx + knob_r), int(cy + knob_r),
+                             fill="#FFFFFF", outline=self.KNOB_BORDER, width=1)
 
 
 class IconBadge(tk.Canvas):
@@ -630,8 +844,15 @@ class IconBadge(tk.Canvas):
         super().__init__(parent, width=s, height=s, bg=page_bg,
                          highlightthickness=0, bd=0)
         self._size = s
-        draw_round_rect(self, 1, 1, s - 2, s - 2, S(7), tint)
-        self._draw_icon(kind, s, color)
+        # 记录设计笔画宽度：矢量与超采样两条路径共用，自检脚本据此断言"笔画 ≥2px"
+        self.stroke_width = max(2, int(round(2.0 * (s / 26.0))))
+        photo = render_icon_badge(self, kind, s, tint, color, S(7))
+        if photo is not None:
+            self._photo = photo
+            self.create_image(0, 0, image=photo, anchor="nw")
+        else:
+            draw_round_rect(self, 1, 1, s - 2, s - 2, S(7), tint)
+            self._draw_icon(kind, s, color)
 
     def _draw_icon(self, kind: str, s: int, color: str) -> None:
         """图标按尺寸等比绘制（u = 单位长度），高 DPI 下自动放大不变形。"""
