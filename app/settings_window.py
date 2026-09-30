@@ -368,6 +368,10 @@ class SettingsWindow:
                              "-size", pixels, "-weight", weight)
             except Exception:  # noqa: BLE001
                 pass
+            # 登记真实像素字号：ui.TextLabel 要按它去渲染文字图片。
+            # 为什么不从 Tk 反推：`font actual` 返回的是四舍五入后的整数磅值，
+            # 在非 100% DPI 下反算会差 1px，字号差 1px 就又发虚了。
+            ui.register_font(name, family, abs(pixels), weight)
 
         # 统一 Tk 内置命名字体：这样"没有显式指定 font"的控件（含 tk.Entry 右键菜单、
         # 内建对话框的文本、下拉列表等）也会跟着变成黑体 + 整数像素
@@ -494,15 +498,15 @@ class SettingsWindow:
         # 顶部标题（紧凑：标题 + 一行说明）
         header = tk.Frame(outer, bg=COLOR_BG)
         header.pack(fill="x", padx=14, pady=(12, 10))
-        tk.Label(header, text="瞬译 设置", bg=COLOR_BG, fg=COLOR_TEXT,
+        ui.TextLabel(header, text="瞬译 设置", bg=COLOR_BG, fg=COLOR_TEXT,
                  font=UI_FONT_BOLD).pack(anchor="w")
-        tk.Label(header, text="管理翻译模型、目标语言、档位与快捷键；点「保存」后立即生效。",
+        ui.TextLabel(header, text="管理翻译模型、目标语言、档位与快捷键；点「保存」后立即生效。",
                  bg=COLOR_BG, fg=COLOR_SUBTEXT, font="ShunYiSmall").pack(anchor="w", pady=(2, 0))
 
         # 未保存提示条（常驻型，贴在窗口底部、按钮行上方；见 _update_dirty_bar）
         self._dirty_panel = ui.RoundedPanel(outer, tone="warn", radius=8, pad=4, page_bg=COLOR_BG)
         self._dirty_bar = self._dirty_panel            # 兼容既有引用/测试
-        self._dirty_label = tk.Label(self._dirty_panel.inner, text="", bg=COLOR_WARN_BG,
+        self._dirty_label = ui.TextLabel(self._dirty_panel.inner, text="", bg=COLOR_WARN_BG,
                                      fg=COLOR_WARN_FG, font="ShunYiSmall", anchor="w",
                                      justify="left", wraplength=ui.S(470))
         self._dirty_label.pack(fill="x", padx=8, pady=4)
@@ -512,7 +516,7 @@ class SettingsWindow:
         # 位置与配色见 _show_notice；默认不显示。
         self._notice_box = ui.RoundedPanel(outer, tone="ok", radius=8, pad=4, page_bg=COLOR_BG,
                                            shadow=True, fit_width=True)
-        self._notice_label = tk.Label(self._notice_box.inner, text="", bg=COLOR_OK_BG,
+        self._notice_label = ui.TextLabel(self._notice_box.inner, text="", bg=COLOR_OK_BG,
                                       fg=ui.COLOR_OK_TEXT, font="ShunYiSmall", anchor="w",
                                       justify="left", wraplength=ui.S(430))
         self._notice_label.pack(fill="x", padx=8, pady=5)
@@ -611,7 +615,7 @@ class SettingsWindow:
         head.pack(fill="x", pady=(0, 8))
         if icon:
             ui.IconBadge(head, icon, size=24, page_bg=COLOR_CARD).pack(side="left", padx=(0, 8))
-        title_label = tk.Label(head, text=title, bg=COLOR_CARD, fg=COLOR_TEXT,
+        title_label = ui.TextLabel(head, text=title, bg=COLOR_CARD, fg=COLOR_TEXT,
                                font=UI_FONT_BOLD)
         title_label.pack(side="left")
         # 记下标题标签：清晰度自检要拿"深色文字"测灰晕（灰色说明文字的抗锯齿
@@ -626,7 +630,7 @@ class SettingsWindow:
         """圆角提示框（对应参考图里的浅蓝说明框）。"""
         box = ui.RoundedPanel(parent, tone=tone, radius=8, pad=4, page_bg=COLOR_CARD)
         fill, _border, fg = ui.TONES[tone]
-        tk.Label(box.inner, text=text, bg=fill, fg=fg, font=font, anchor="w", justify="left",
+        ui.TextLabel(box.inner, text=text, bg=fill, fg=fg, font=font, anchor="w", justify="left",
                  wraplength=ui.S(wraplength)).pack(fill="x", padx=ui.S(8), pady=ui.S(5))
         box.pack(fill="x", pady=(0, 8))
         return box
@@ -635,7 +639,7 @@ class SettingsWindow:
         """模型状态胶囊：对外保留 label 的 cget/configure（业务与回归测试都用 text/fg）。"""
         chip = ui.RoundedPanel(parent, tone="plain", radius=999, pad=2, page_bg=COLOR_CARD,
                                fit_width=True)
-        chip.label = tk.Label(chip.inner, text=text, bg=ui.COLOR_HOVER, fg=COLOR_SUBTEXT,
+        chip.label = ui.TextLabel(chip.inner, text=text, bg=ui.COLOR_HOVER, fg=COLOR_SUBTEXT,
                               font="ShunYiSmall", anchor="w")
         chip.label.pack(padx=8, pady=1)
 
@@ -699,7 +703,7 @@ class SettingsWindow:
         row = tk.Frame(parent, bg=COLOR_CARD)
         row.pack(fill="x")
         ui.IconBadge(row, badge, size=20, tint=ui.TONES[tone][0]).pack(side="left", padx=(0, 6))
-        tk.Label(row, text=title, bg=COLOR_CARD, fg=ui.TONES[tone][2],
+        ui.TextLabel(row, text=title, bg=COLOR_CARD, fg=ui.TONES[tone][2],
                  font="ShunYiSmall").pack(side="left")
         return row
 
@@ -714,7 +718,7 @@ class SettingsWindow:
         where = f"模型存放位置：{root_dir}"
         if not is_program_dir:
             where += "（软件所在目录含中文或不可写，已自动回退到这里；把软件放到纯英文路径即可改用软件目录）"
-        tk.Label(card, text=where, bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
+        ui.TextLabel(card, text=where, bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
                  anchor="w", justify="left", wraplength=ui.S(440)).pack(fill="x", pady=(0, 8))
 
         for info in MODEL_CARDS:
@@ -726,11 +730,11 @@ class SettingsWindow:
             left.pack(side="left", fill="x", expand=True)
             title_line = tk.Frame(left, bg=COLOR_CARD)
             title_line.pack(fill="x")
-            tk.Label(title_line, text=info["title"], bg=COLOR_CARD, fg=COLOR_TEXT,
+            ui.TextLabel(title_line, text=info["title"], bg=COLOR_CARD, fg=COLOR_TEXT,
                      font=UI_FONT_BOLD).pack(side="left")
-            tk.Label(title_line, text=info["direction"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+            ui.TextLabel(title_line, text=info["direction"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                      font="ShunYiSmall").pack(side="left", padx=(8, 0))
-            tk.Label(title_line, text=info["size_text"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+            ui.TextLabel(title_line, text=info["size_text"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                      font="ShunYiSmall").pack(side="left", padx=(8, 0))
 
             status = self._status_chip(left)
@@ -741,7 +745,7 @@ class SettingsWindow:
 
             progress = ttk.Progressbar(card, mode="determinate", maximum=100,
                                        style="Thin.Horizontal.TProgressbar")
-            note = tk.Label(card, text=info["note"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+            note = ui.TextLabel(card, text=info["note"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                             font="ShunYiSmall", anchor="w", justify="left", wraplength=ui.S(440))
             note.pack(fill="x", pady=(0, 10))
 
@@ -761,11 +765,11 @@ class SettingsWindow:
         line = tk.Frame(card, bg=COLOR_CARD)
         line.pack(fill="x", pady=(2, 2))
         ui.IconBadge(line, "bell", size=20, page_bg=COLOR_CARD).pack(side="left", padx=(0, 6))
-        tk.Label(line, text="通知提醒", bg=COLOR_CARD, fg=COLOR_TEXT,
+        ui.TextLabel(line, text="通知提醒", bg=COLOR_CARD, fg=COLOR_TEXT,
                  font=UI_FONT).pack(side="left")
         ui.ToggleSwitch(line, self._notify_enabled_var, command=self._on_notify_change,
                         page_bg=COLOR_CARD).pack(side="right")
-        tk.Label(card, text="关闭后所有气泡提醒都不再弹出（翻译完成、取词失败、快捷键冲突、"
+        ui.TextLabel(card, text="关闭后所有气泡提醒都不再弹出（翻译完成、取词失败、快捷键冲突、"
                             "模型下载完成/失败、启动提示等），只记日志。默认开启；改动立即生效，"
                             "不需要点「保存」。",
                  bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
@@ -799,7 +803,7 @@ class SettingsWindow:
                                            self._lang_var, self._on_lang_change,
                                            page_bg=COLOR_CARD)
         self._lang_group.pack(anchor="w", pady=(0, 6))
-        self._lang_desc = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+        self._lang_desc = ui.TextLabel(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                                    font="ShunYiSmall", anchor="w", justify="left", wraplength=ui.S(440))
         self._lang_desc.pack(fill="x", pady=(0, 6))
         self._lang_var.trace_add("write", lambda *_: self._sync_lang_desc())
@@ -828,7 +832,7 @@ class SettingsWindow:
                                               self._quality_var, self._on_quality_change,
                                               page_bg=COLOR_CARD)
         self._quality_group.pack(anchor="w", pady=(0, 6))
-        self._speed_hint = tk.Label(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+        self._speed_hint = ui.TextLabel(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                                     font="ShunYiSmall", justify="left", anchor="w",
                                     wraplength=ui.S(440))
         self._speed_hint.pack(fill="x")
@@ -840,7 +844,7 @@ class SettingsWindow:
 
         line = tk.Frame(card, bg=COLOR_CARD)
         line.pack(fill="x", pady=(0, 6))
-        tk.Label(line, text="长时间不翻译时自动释放内存", bg=COLOR_CARD, fg=COLOR_TEXT,
+        ui.TextLabel(line, text="长时间不翻译时自动释放内存", bg=COLOR_CARD, fg=COLOR_TEXT,
                  font=UI_FONT).pack(side="left")
         ui.ToggleSwitch(line, self._idle_unload_var, command=self._on_memory_change,
                         page_bg=COLOR_CARD).pack(side="right")
@@ -853,7 +857,7 @@ class SettingsWindow:
 
     def _build_hotkey_section(self, parent) -> None:
         card = self._card(parent, "快捷键", icon="hotkey")
-        tk.Label(card, text="按一下就能把刚打的中文变成译文。", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+        ui.TextLabel(card, text="按一下就能把刚打的中文变成译文。", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                  font="ShunYiSmall").pack(anchor="w", pady=(0, 6))
 
         line = tk.Frame(card, bg=COLOR_CARD)
@@ -875,7 +879,7 @@ class SettingsWindow:
         ui.RoundedButton(line, text="恢复默认", kind="secondary", height=28, padx=14,
                          page_bg=COLOR_CARD, command=self._reset_hotkey).pack(side="left", padx=(8, 0))
 
-        self._hotkey_hint = tk.Label(card, text="要求：至少包含一个 Ctrl / Alt / Shift，再加一个主键（例如 Alt+J）。",
+        self._hotkey_hint = ui.TextLabel(card, text="要求：至少包含一个 Ctrl / Alt / Shift，再加一个主键（例如 Alt+J）。",
                                      bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
                                      anchor="w", justify="left", wraplength=ui.S(440))
         self._hotkey_hint.pack(fill="x", pady=(8, 0))

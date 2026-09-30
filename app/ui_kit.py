@@ -22,6 +22,8 @@ from __future__ import annotations
 import base64
 import ctypes
 import io
+import math
+import os
 import sys
 import tkinter as tk
 
@@ -169,7 +171,7 @@ TONES = {
 # 曲线/斜线因此获得 1px 平滑过渡（锐利而不毛），而水平/垂直的 1px 边框
 # 仍然落在整像素上（不会变灰变虚）。Pillow 不可用时自动退回纯 Tk 矢量画法。
 try:
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
     HAS_PIL = True
 except Exception:  # noqa: BLE001
     HAS_PIL = False
@@ -369,6 +371,480 @@ def _draw_icon_image(kind, s, tint, color, radius):
         draw.ellipse([X(-1.6) * ss, Y(6) * ss, X(1.6) * ss, Y(9) * ss], fill=color)
     return img.resize((int(s), int(s)), Image.BOX)
 
+
+# ------------------------------- 文字渲染（灰度超采样，替代 Tk 的 ClearType 亚像素）
+# 为什么这么做（2026-10-01 取证）：Tk 在 Windows 上走 GDI 的 ClearType ——
+# 把字体位图放大 16 倍看，笔画边缘是**彩虹色**（R/G/B 三个子像素分家），
+# 字形轮廓被"次像素位置"扭曲，12/13px 的小字尤其显得毛糙、发虚。
+# 这里改用 Pillow/FreeType 在 SUPERSAMPLE 倍分辨率下渲染、再 BOX 降采样：
+# 得到**灰度抗锯齿**的干净字形 —— 无彩边、笔画落在整像素上、斜线/曲线有 1px 平滑过渡。
+# 实测（12px × 一行 30 字 × 3×）：单行渲染 0.85ms，PNG+PhotoImage 2.6ms，可忽略。
+# Pillow 或字体文件不可用时，TextLabel 自动退回原生 Tk 渲染（功能不受影响）。
+
+_FONTS_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+_FONT_FILE_CACHE: dict = {}
+_TEXT_PNG_CACHE: dict = {}
+_TEXT_PNG_CACHE_MAX = 512
+
+
+def _registry_font_files() -> list:
+    """从注册表列出已安装字体 [(项名, 文件路径)]；非 Windows 或读取失败返回空。"""
+    out: list = []
+    if not sys.platform.startswith("win"):
+        return out
+    try:
+        import winreg
+    except Exception:  # noqa: BLE001
+        return out
+    sub = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, sub) as key:
+                idx = 0
+                while True:
+                    try:
+                        name, value, _kind = winreg.EnumValue(key, idx)
+                    except OSError:
+                        break
+                    idx += 1
+                    if isinstance(value, str):
+                        out.append((name, value))
+        except OSError:
+            continue
+    return out
+
+
+def _ttc_face_index(path: str, family: str) -> int:
+    """在一个 .ttc（字体集合）里找出 family 对应的 face 序号（找不到返回 0）。"""
+    wanted = family.strip().lower()
+    try:
+        for i in range(12):
+            try:
+                font = ImageFont.truetype(path, 24, index=i)
+            except Exception:  # noqa: BLE001
+                break
+            if font.getname()[0].strip().lower() == wanted:
+                return i
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
+def font_file(family: str, bold: bool = False):
+    """把字体**族名**解析成磁盘文件 + face 索引，返回 (路径, index) 或 None。
+
+    为什么需要它：Pillow 只能按文件渲染，而 Tk 用的是族名（"Microsoft YaHei UI"）。
+    注册表项名形如 "Microsoft YaHei & Microsoft YaHei UI (TrueType)" → msyh.ttc，
+    粗体在另一个项里（msyhbd.ttc），所以要按原名匹配 + 粗细过滤 + face 探测。
+    """
+    key = (str(family).strip().lower(), bool(bold))
+    if key in _FONT_FILE_CACHE:
+        return _FONT_FILE_CACHE[key]
+    result = None
+    if HAS_PIL:
+        wanted = key[0]
+        for name, value in _registry_font_files():
+            low = value.lower()
+            if not low.endswith((".ttf", ".ttc", ".otf")):
+                continue
+            base = name.split("(")[0].strip()
+            if wanted not in base.lower():
+                continue
+            if ("bold" in base.lower()) != bool(bold):
+                continue
+            path = value if ("\\" in value or "/" in value) else os.path.join(_FONTS_DIR, value)
+            if not os.path.exists(path):
+                continue
+            result = (path, _ttc_face_index(path, family))
+            break
+    _FONT_FILE_CACHE[key] = result
+    return result
+
+
+def _tk_font_pairs(widget, font_name: str, sub: str) -> dict:
+    """读 Tk 命名字体的 actual/metrics（返回 "ascent": "13" 这样的字典）。
+
+    注意：`font actual` 返回 Tcl **列表**（Python 得到元组），而 `font metrics` 返回
+    的是**字符串**（"-ascent 15 -descent 4 -linespace 19 -fixed 0"）—— 两种都要能吃。
+    """
+    try:
+        raw = widget.tk.call("font", sub, font_name)
+    except Exception:  # noqa: BLE001
+        return {}
+    if isinstance(raw, str):
+        parts = raw.split()
+    else:
+        try:
+            parts = [str(item) for item in raw]
+        except Exception:  # noqa: BLE001
+            return {}
+    info = {}
+    for i in range(0, len(parts) - 1, 2):
+        info[parts[i].lstrip("-")] = parts[i + 1]
+    return info
+
+
+# 命名字体 → (family, 像素字号, weight)：由建字方（settings_window._apply_theme）
+# 注册。为什么不从 Tk 反推字号：`font actual` 返回的是**四舍五入后的整数磅值**，
+# 反算像素在非 100% DPI 下会差 1px（字号差 1px 就是"又发虚了"）。
+_FONT_PX_REGISTRY: dict = {}
+
+
+def register_font(name: str, family: str, px: int, weight: str = "normal") -> None:
+    """登记命名字体的真实像素字号（建字后调用，覆盖旧值）。"""
+    _FONT_PX_REGISTRY[str(name)] = (str(family), int(px), str(weight))
+
+
+def font_spec(widget, font_name: str) -> dict:
+    """命名字体的实际规格 {family, px, weight, ascent, descent, linespace}。"""
+    metrics = _tk_font_pairs(widget, font_name, "metrics")
+    spec = {
+        "family": "TkDefaultFont",
+        "weight": "normal",
+        "px": 12,
+        "ascent": 13, "descent": 4, "linespace": 17,
+    }
+    for field in ("ascent", "descent", "linespace"):
+        try:
+            spec[field] = int(metrics[field])
+        except Exception:  # noqa: BLE001
+            pass
+    reg = _FONT_PX_REGISTRY.get(str(font_name))
+    if reg:
+        spec["family"], spec["px"], spec["weight"] = reg
+        return spec
+    actual = _tk_font_pairs(widget, font_name, "actual")
+    if actual:
+        spec["family"] = str(actual.get("family", spec["family"]))
+        spec["weight"] = str(actual.get("weight", spec["weight"]))
+        try:
+            # 兜底路径：Tk 里负数字号 = 像素，正数 = 磅。磅要按**实际 DPI**折算。
+            size = int(actual.get("size", -12))
+            if size < 0:
+                spec["px"] = abs(size)
+            else:
+                dpi = float(widget.winfo_fpixels("1i") or 96.0)
+                spec["px"] = max(1, int(round(size * dpi / 72.0)))
+        except Exception:  # noqa: BLE001
+            pass
+    return spec
+
+
+_LATIN_WORD = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/%@+:&'\"!")
+
+
+def _split_tokens(text: str) -> list:
+    """切词：连续拉丁字母/数字当整词（不在词内断行），其余逐字（CJK、标点）。"""
+    out, buf = [], ""
+    for ch in text:
+        if ch in _LATIN_WORD:
+            buf += ch
+        else:
+            if buf:
+                out.append(buf)
+                buf = ""
+            out.append(ch)
+    if buf:
+        out.append(buf)
+    return out
+
+
+def wrap_lines(text: str, limit_px: int, measure) -> list:
+    """按像素宽度贪心断行（CJK 逐字、拉丁按词）。
+
+    `measure(s) -> 像素宽` 用**与 Tk 相同的度量函数**（TextLabel 传 `font measure`），
+    这样断行点、行数与原生 Label 完全一致 —— 否则换行不同会让图片高度对不上。
+    """
+    lines: list = []
+    for para in str(text).split("\n"):
+        if limit_px <= 0:
+            lines.append(para)
+            continue
+        cur = ""
+        for token in _split_tokens(para):
+            if not cur:
+                cur = token
+            elif measure(cur + token) <= limit_px:
+                cur += token
+            else:
+                lines.append(cur.rstrip())
+                cur = token.lstrip() if token.strip() else ""
+        lines.append(cur.rstrip())
+    return lines or [""]
+
+
+def _pillow_measure(font, ss: int):
+    """Pillow 兜底度量（没有 Tk 时用，单位统一折算成逻辑像素）。"""
+    def _m(text):
+        try:
+            return int(math.ceil(font.getlength(text) / ss))
+        except Exception:  # noqa: BLE001
+            return 0
+    return _m
+
+
+def wrap_to_lines(text: str, limit_px: int, measure, target: int) -> list:
+    """把文本断成**恰好 target 行**（每行不超过 limit_px），行宽尽量均匀。
+
+    为什么需要它：Tk 的多行断行比"逐字贪心"更保守（Tk 实测会多排 1 行），
+    若照自己的断行渲染，多行 Label 会比原生矮一整行、整块界面跟着变矮。
+    这里先让 Tk 定下"该有几行"，再二分出能恰好排出该行数的行宽 —— 高度就与原来一致。
+    """
+    if target <= 1 or limit_px <= 0 or "\n" in str(text):
+        return wrap_lines(text, limit_px, measure)
+    base = wrap_lines(text, limit_px, measure)
+    if len(base) >= target:
+        return base
+    # 行数随行宽增大而减少：找"行数仍不少于 target"的最大行宽（不越界 limit_px）
+    lo, hi = 1, int(limit_px)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        try:
+            count = len(wrap_lines(text, mid, measure))
+        except Exception:  # noqa: BLE001
+            return base
+        if count >= target:
+            lo = mid
+        else:
+            hi = mid - 1
+    return wrap_lines(text, lo, measure)
+
+
+def _hex_to_rgba(color: str):
+    c = str(color).lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    try:
+        return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16), 255)
+    except Exception:  # noqa: BLE001
+        return (31, 41, 55, 255)
+
+
+def text_png(text: str, family: str, px: int, weight: str = "normal", fg: str = COLOR_TEXT,
+             wraplength: int = 0, linespace: int = 0, ascent: int = 0,
+             ss: int = SUPERSAMPLE, measure=None, pad_x: int = 0, pad_y: int = 0,
+             target_lines: int = 0, target_w: int = 0):
+    """超采样渲染一段文字 → (PNG 字节, 宽, 高)。失败返回 (None, 0, 0)。
+
+    尺寸对齐（2026-10-01 实测 Tk 规则，勿改）：
+      文字 Label 的请求尺寸 = 文字 + 2*borderwidth + 2*padx/pady
+      图片 Label 的请求尺寸 = 图片 + 2*borderwidth（**padx/pady 被忽略**）
+    所以图片要把 padx/pady 自己画进去（四周留白），否则换控件后界面会比原来窄/矮 2px。
+    宽度用 Tk 的 `font measure` 为准、高度用 Tk 的 `linespace` 为准 —— 与原生逐像素一致。
+    """
+    if not HAS_PIL or not text:
+        return (None, 0, 0)
+    pad_x, pad_y = max(0, int(pad_x)), max(0, int(pad_y))
+    key = ("txt", text, family, int(px), str(weight), fg, int(wraplength),
+           int(linespace), int(ascent), int(ss), measure is not None, pad_x, pad_y,
+           int(target_lines), int(target_w))
+    hit = _TEXT_PNG_CACHE.get(key)
+    if hit is not None:
+        return hit
+    result = (None, 0, 0)
+    got = font_file(family, str(weight).lower() == "bold")
+    if got:
+        path, index = got
+        try:
+            font = ImageFont.truetype(path, max(1, int(px)) * ss, index=index)
+            pil_a, pil_d = font.getmetrics()
+            # 断行统一走「逻辑像素 + 同一个度量函数」：有 Tk 的 measure 就用它（与原生
+            # Label 完全一致），否则退回 FreeType 度量。
+            ruler = measure if measure is not None else _pillow_measure(font, ss)
+            limit = int(wraplength) if wraplength else 0
+            if target_w > 0 and (not limit or target_w < limit):
+                # 多行场景：用 Tk 实际排出来的行宽当上限，断行点才会与原生一致
+                limit = int(target_w)
+            lines = wrap_lines(text, limit, ruler)
+            if target_lines > 0 and len(lines) < target_lines:
+                lines = wrap_to_lines(text, limit, ruler, int(target_lines))
+            step = int(linespace) * ss if linespace else (pil_a + pil_d)
+            off_y = max(0, int(ascent) * ss - pil_a) if ascent else 0
+            pil_w = max(int(math.ceil(font.getlength(line))) for line in lines) or 1
+            tk_w = 0
+            if measure is not None:
+                try:
+                    tk_w = max(int(measure(line)) for line in lines)
+                except Exception:  # noqa: BLE001
+                    tk_w = 0
+            # 宽度以 Tk 的度量为准（保证与原生 Label 对齐）；只有 Pillow 的字形明显更宽
+            # 时才放宽，避免右边最后一笔被裁掉。1px 内视为舍入差 —— 字的右侧本来就是
+            # advance 留白，裁不到笔画。
+            pil_w_px = int(math.ceil(pil_w / ss))
+            body_w = tk_w if (tk_w and pil_w_px <= tk_w + 1) else max(1, tk_w, pil_w_px)
+            if target_w > 0:
+                body_w = max(body_w, int(target_w))
+            body_h = int(linespace) if linespace else int(
+                math.ceil((off_y + pil_a + pil_d) / ss))
+            n_lines = max(len(lines), int(target_lines))
+            w_px = body_w + 2 * pad_x
+            h_px = max(1, body_h + int(linespace) * (n_lines - 1)) + 2 * pad_y
+            img = Image.new("RGBA", (w_px * ss, h_px * ss), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            rgba = _hex_to_rgba(fg)
+            for i, line in enumerate(lines):
+                if line:
+                    draw.text((pad_x * ss, pad_y * ss + off_y + i * step), line,
+                              font=font, fill=rgba)
+            img = img.resize((w_px, h_px), Image.BOX)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            result = (buf.getvalue(), w_px, h_px)
+        except Exception:  # noqa: BLE001
+            result = (None, 0, 0)
+    if len(_TEXT_PNG_CACHE) >= _TEXT_PNG_CACHE_MAX:
+        for old in list(_TEXT_PNG_CACHE)[: _TEXT_PNG_CACHE_MAX // 2]:
+            _TEXT_PNG_CACHE.pop(old, None)
+    _TEXT_PNG_CACHE[key] = result
+    return result
+
+
+def render_text(master, text: str, family: str, px: int, weight: str = "normal",
+                fg: str = COLOR_TEXT, wraplength: int = 0, linespace: int = 0,
+                ascent: int = 0, measure=None, pad_x: int = 0, pad_y: int = 0,
+                target_lines: int = 0, target_w: int = 0):
+    """渲染文字并返回 (PhotoImage, 宽, 高)；不可用时 (None, 0, 0)。"""
+    data, w, h = text_png(text, family, px, weight, fg, wraplength, linespace,
+                          ascent, measure=measure, pad_x=pad_x, pad_y=pad_y,
+                          target_lines=target_lines, target_w=target_w)
+    return (_make_photo(master, data), w, h)
+
+
+def text_cache_stats() -> dict:
+    """文字渲染缓存统计（自检用）。"""
+    return {"text_cached": len(_TEXT_PNG_CACHE), "font_files": len(_FONT_FILE_CACHE),
+            "files": {f"{k[0]}{'/bold' if k[1] else ''}": (v[0] if v else None)
+                      for k, v in _FONT_FILE_CACHE.items()}}
+
+
+class TextLabel(tk.Label):
+    """文字标签：用**灰度超采样**渲染文字，替代 Tk 的 ClearType 亚像素渲染。
+
+    与 tk.Label 的差别只在"怎么画字"——text / font / fg / bg / anchor / justify /
+    wraplength 的接口保持兼容（cget 也照旧返回原名），因此布局与既有代码、
+    回归测试都不用改。Pillow 或字体文件不可用时自动退回原生 Tk 渲染。
+    """
+
+    def __init__(self, parent, text: str = "", font: str = UI_FONT, fg: str = COLOR_TEXT,
+                 bg: str = COLOR_CARD, wraplength: int = 0, justify: str = "center",
+                 anchor: str = "center", **kw):
+        self._text = text
+        self._font_name = font
+        self._fg = fg
+        self._wraplength = wraplength or 0
+        self._justify = justify
+        # 含图片的 Label 默认 padx/pady 是 0，含文字的默认是 1（Tk 的规则）——
+        # 不显式补齐就会比原生文字 Label 矮 2px、窄 2px，整体布局会跟着挪位。
+        kw.setdefault("padx", 1)
+        kw.setdefault("pady", 1)
+        super().__init__(parent, text="", font=font, fg=fg, bg=bg, anchor=anchor,
+                         justify=justify, wraplength=self._wraplength, **kw)
+        self._photo = None
+        bind_photo_cleanup(self)
+        self._refresh_text()
+
+    # ---- 内容刷新
+    def _measure(self, line: str) -> int:
+        """用 Tk 自己的字体度量测宽（保证与原生 Label 的换行/宽度一致）。"""
+        return int(self.tk.call("font", "measure", self._font_name, line))
+
+    def _native_metrics(self, spec: dict) -> dict:
+        """多行场景：让 Tk 自己排一次版，问出它"打算占几行、每行多宽"。
+
+        为什么要问 Tk：Tk 的断行比逐字贪心保守（实测同一个 wraplength 会多排 1 行），
+        照自己的断行渲染，多行 Label 会比原生矮一整行，整块界面跟着变矮变宽。
+        拿到行数与内容宽之后，按同样的行数、同样的宽度出图 —— 布局回到原样。
+        """
+        if not self._wraplength:
+            return {}
+        try:
+            probe = tk.Label(self.master, text=str(self._text), font=self._font_name,
+                             wraplength=self._wraplength, justify=self._justify,
+                             anchor=self.cget("anchor"), padx=self.cget("padx"),
+                             pady=self.cget("pady"), bd=self.cget("borderwidth"),
+                             highlightthickness=self.cget("highlightthickness"))
+            req_w = int(probe.winfo_reqwidth())
+            req_h = int(probe.winfo_reqheight())
+            probe.destroy()
+            span = max(1, int(spec.get("linespace", 17)))
+            pad_x = int(self.cget("padx"))
+            extra_y = 2 * (int(self.cget("pady")) + int(self.cget("borderwidth"))
+                           + int(self.cget("highlightthickness") or 0))
+            extra_x = 2 * (pad_x + int(self.cget("borderwidth"))
+                           + int(self.cget("highlightthickness") or 0))
+            return {"lines": max(1, (req_h - extra_y) // span),
+                    "width": max(1, req_w - extra_x)}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _refresh_text(self) -> None:
+        if not self._text:
+            self._photo = None
+            super().configure(image="", text="")
+            return
+        spec = font_spec(self, self._font_name)
+        try:
+            pad_x = max(0, int(self.cget("padx")))
+            pad_y = max(0, int(self.cget("pady")))
+        except Exception:  # noqa: BLE001
+            pad_x = pad_y = 0
+        native = self._native_metrics(spec)
+        photo, _w, _h = render_text(self, str(self._text), spec["family"], spec["px"],
+                                    spec["weight"], self._fg, self._wraplength,
+                                    spec["linespace"], spec["ascent"], self._measure,
+                                    pad_x, pad_y, native.get("lines", 0),
+                                    native.get("width", 0))
+        if photo is None:
+            # 兜底：退回原生 Tk 文字（回到改造前的样子，功能不受影响）
+            self._photo = None
+            super().configure(image="", text=str(self._text))
+            return
+        self._photo = photo              # 必须持有引用，否则图片会被回收
+        super().configure(image=photo, text="")
+
+    # ---- 兼容 tk.Label 的读写习惯（业务代码与回归测试都在用）
+    def cget(self, key):
+        if key == "text":
+            return self._text
+        if key == "font":
+            return self._font_name
+        if key == "fg" or key == "foreground":
+            return self._fg
+        if key == "wraplength":
+            return self._wraplength
+        return super().cget(key)
+
+    def configure(self, cnf=None, **kw):  # noqa: A003
+        if cnf is not None and isinstance(cnf, dict):
+            kw = {**cnf, **kw}
+        need = False
+        if "text" in kw:
+            self._text = kw.pop("text")
+            need = True
+        if "font" in kw:
+            self._font_name = kw.pop("font")
+            need = True
+        if "fg" in kw:
+            self._fg = kw.pop("fg")
+            need = True
+        if "foreground" in kw:
+            self._fg = kw.pop("foreground")
+            need = True
+        if "wraplength" in kw:
+            self._wraplength = kw.pop("wraplength") or 0
+            # 同时交给 Tk：兜底（Pillow 缺失）时会退回原生文字渲染，那时靠它换行
+            kw["wraplength"] = self._wraplength
+            need = True
+        if "justify" in kw:
+            self._justify = kw.pop("justify")
+        if cnf is not None:
+            super().configure(cnf, **kw)
+        elif kw:
+            super().configure(**kw)
+        if need:
+            self._refresh_text()
+
+    config = configure
 
 
 def draw_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill, outline="", width=1):

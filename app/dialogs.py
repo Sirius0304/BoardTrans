@@ -85,9 +85,9 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str):
     text_box = tk.Frame(row, bg=ui.COLOR_CARD)
     text_box.pack(side="left", fill="both", expand=True)
 
-    tk.Label(text_box, text=title, bg=ui.COLOR_CARD, fg=ui.COLOR_TEXT,
+    ui.TextLabel(text_box, text=title, bg=ui.COLOR_CARD, fg=ui.COLOR_TEXT,
              font=ui.UI_FONT_BOLD, anchor="w", justify="left").pack(fill="x")
-    tk.Label(text_box, text=message, bg=ui.COLOR_CARD, fg=ui.COLOR_SUBTEXT,
+    ui.TextLabel(text_box, text=message, bg=ui.COLOR_CARD, fg=ui.COLOR_SUBTEXT,
              font=ui.UI_FONT, anchor="w", justify="left",
              wraplength=ui.S(_TEXT_WRAP)).pack(fill="x", pady=(ui.S(6), 0))
 

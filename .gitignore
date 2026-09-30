@@ -41,6 +41,9 @@ dist_new/
 # ---- 工作区工具数据 ----
 .workbuddy/
 
+# ---- 诊断中间产物（跑 tools/diag_*.py 生成，交付图在 docs/ 根下）----
+docs/_diag/
+
 # ---- 编辑器 / 系统 ----
 .idea/
 .vscode/

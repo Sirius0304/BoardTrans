@@ -23,8 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import config, models, paths                        # noqa: E402
 from app.console import safe_print                           # noqa: E402
+from app.logger import get_logger                            # noqa: E402
 from app.service import HotkeyService                        # noqa: E402
-from app.settings_window import SettingsWindow               # noqa: E402
+from app.settings_window import FONT_FAMILY, SettingsWindow  # noqa: E402
 from app.tray import TrayApp                                 # noqa: E402
 
 
@@ -76,6 +77,18 @@ def main() -> int:
         pass
 
     # 1) 全局热键 + 翻译服务（原有能力，未做破坏性改动）
+    #    先报告一次界面文字渲染能力：Pillow + 字体文件都可用 → 界面文字走"灰度超采样"；
+    #    任一缺失 → ui.TextLabel 自动退回原生 Tk 文字渲染（功能不受影响，只是有 ClearType
+    #    彩边）。打包成 exe 后尤其需要这行日志来确认冻结环境里同样生效。
+    try:
+        ttf = ui.font_file(FONT_FAMILY, False) if ui.HAS_PIL else None
+    except Exception:  # noqa: BLE001
+        ttf = None
+    get_logger().info("文字渲染: %s（Pillow=%s，字体文件=%s）",
+                      "灰度超采样 3×" if ttf else "原生 Tk 回退",
+                      "有" if ui.HAS_PIL else "无",
+                      ttf[0] if ttf else "未找到")
+
     service = HotkeyService()
 
     # 2) 设置窗口控制器：独立线程，点「设置」时才真正创建界面
