@@ -361,6 +361,57 @@ def main():
     except ImportError:
         print("      ⚠ 跳过（缺少 Pillow；该检查仅用于开发环境，运行时不依赖）")
 
+    print("\n=== H. 组件像素对齐与对比度（「模糊感」的组件侧来源）===")
+    audit = {}
+
+    def _audit_components():
+        """审计所有自绘组件：坐标是否整像素、描边对比度、图标笔画宽度。"""
+        bad_coords = []
+        icon_strokes = []
+        canvases = []
+
+        def walk(w):
+            yield w
+            for c in w.winfo_children():
+                yield from walk(c)
+
+        for w in walk(settings.root):
+            if isinstance(w, (ui.RoundedCard, ui.RoundedPanel, ui.RoundedButton,
+                              ui.ToggleSwitch, ui.IconBadge)):
+                cv = w.canvas if hasattr(w, "canvas") else w
+                canvases.append(cv)
+                for item in cv.find_all():
+                    try:
+                        coords = cv.coords(item)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if any(isinstance(v, float) and v != int(v) for v in coords):
+                        bad_coords.append((type(w).__name__, cv.type(item)))
+                if isinstance(w, ui.IconBadge):
+                    for item in cv.find_all():
+                        try:
+                            if cv.type(item) == "line":
+                                icon_strokes.append(int(float(cv.itemcget(item, "width"))))
+                        except Exception:  # noqa: BLE001
+                            pass
+        audit["bad_coords"] = bad_coords
+        audit["icon_min_stroke"] = min(icon_strokes) if icon_strokes else 0
+        audit["n_components"] = len(canvases)
+
+    settings.run_in_ui(_audit_components)
+    check(f"自绘组件坐标全部整像素（审计 {audit.get('n_components', 0)} 个组件，"
+          f"非整数坐标 {len(audit.get('bad_coords', []))} 个）",
+          not audit.get("bad_coords"), str(audit.get("bad_coords", [])[:4]))
+
+    def _lum(hex_color):
+        c = hex_color.lstrip("#")
+        return 0.299 * int(c[0:2], 16) + 0.587 * int(c[2:4], 16) + 0.114 * int(c[4:6], 16)
+
+    diff_border = 255 - _lum(ui.COLOR_BORDER)
+    check(f"卡片描边与白底对比足够（亮度差 {diff_border:.0f}，阈值 ≥ 25）",
+          diff_border >= 25, f"描边色 {ui.COLOR_BORDER}")
+    check(f"图标笔画 ≥ 2px（实测最小 {audit.get('icon_min_stroke', 0)}px）",
+          audit.get("icon_min_stroke", 0) >= 2, f"{audit.get('icon_min_stroke')}px")
 
     settings.shutdown()
     time.sleep(0.5)

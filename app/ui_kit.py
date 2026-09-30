@@ -86,8 +86,8 @@ def is_dpi_aware() -> bool:
 # 参考图（Clash Verge 风格）：近白页面 + 白卡片 + 浅灰描边 + 蓝色主色 + 语义色
 COLOR_PAGE = "#F7F8FA"          # 页面底色
 COLOR_CARD = "#FFFFFF"          # 卡片 / 面板底
-COLOR_BORDER = "#E5E7EB"        # 1px 描边
-COLOR_BORDER_STRONG = "#D8DCE3"  # 输入框等需要更清楚的描边
+COLOR_BORDER = "#D9DEE5"        # 1px 描边（#E5E7EB 在白底上对比不足，看着发虚）
+COLOR_BORDER_STRONG = "#C9D0DA"  # 输入框/按钮等需要更清楚的描边
 COLOR_TEXT = "#1F2937"          # 主文字
 COLOR_SUBTEXT = "#6B7280"       # 次要文字
 COLOR_MUTED = "#9CA3AF"         # 更弱的文字（禁用）
@@ -170,8 +170,10 @@ def draw_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill, outline="", width=1)
 
     返回画出来的 item 列表（调用方需要时可以删除/置底）。
     """
-    x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
-    r = max(1, min(float(r), (x2 - x1) / 2, (y2 - y1) / 2))
+    # 像素对齐：所有坐标与半径取整。Tk 画布不做抗锯齿，半像素坐标会让 1px
+    # 描边摊到相邻两行/列上（看起来发虚）；整数坐标才能保证边缘落在单一像素行。
+    x1, y1, x2, y2 = int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))
+    r = max(1, min(int(round(r)), (x2 - x1) // 2, (y2 - y1) // 2))
     items = []
     # 填充：中间两条矩形 + 四个 90° 扇形（扇形自带的两条半径线落在形状内部，看不见）
     items.append(cv.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline=""))
@@ -287,8 +289,9 @@ class _CanvasBox(tk.Frame):
         if w <= 2 or h <= 2:
             return
         if self._shadow:
-            # 轻阴影：只画一层 1px 偏移的浅灰，够暗示层次又不至于像描边
-            self._shapes.extend(draw_round_rect(cv, 1, 2, w - 2, h - 2, self._radius, "#F0F1F4"))
+            # 轻阴影：贴着卡片下缘/右缘各露出 1px 的浅灰（比"整圈偏移的灰底"干净，
+            # 不会产生灰蒙蒙的晕边）
+            self._shapes.extend(draw_round_rect(cv, 1, 2, w - 1, h - 1, self._radius, "#E7EAEF"))
         self._shapes.extend(draw_round_rect(cv, 1, 1, w - 2, h - 2, self._radius,
                                             self._fill, self._border))
         for item in self._shapes:      # 画在内容之下
@@ -544,6 +547,8 @@ class ToggleSwitch(tk.Canvas):
     def __init__(self, parent, variable, command=None, page_bg=COLOR_CARD,
                  width=46, height=26):
         w, h = S(width), S(height)
+        if h % 2:                     # 高度取偶数：胶囊半径 = (h-2)/2 才是整数
+            h += 1
         super().__init__(parent, width=w, height=h, bg=page_bg,
                          highlightthickness=0, bd=0)
         self._var = variable
@@ -598,15 +603,18 @@ class ToggleSwitch(tk.Canvas):
         self.delete("all")
         on = bool(self._var.get())
         w, h = self._box_w, self._box_h
-        # 胶囊轨道：真圆弧（半径 = 高度的一半），整像素对齐
-        draw_round_rect(self, 1, 1, w - 2, h - 2, (h - 2) / 2, self._track_color(on))
+        # 胶囊轨道：真圆弧（半径 = (h-2)/2，h 为偶数时是整数），整像素对齐
+        draw_round_rect(self, 1, 1, w - 2, h - 2, (h - 2) // 2, self._track_color(on))
         # 白色旋钮 + 1px 描边（描边让旋钮边界在浅色轨道上也清楚）
         inset = S(3)
-        knob_r = (h - 2 * inset) / 2
+        knob_d = h - 2 - 2 * inset        # 旋钮直径（整数）
+        if knob_d % 2:
+            knob_d -= 1
+        knob_r = knob_d / 2
         cx = (w - 1 - inset - knob_r) if on else (1 + inset + knob_r)
         cy = h / 2
-        self.create_oval(round(cx - knob_r), round(cy - knob_r),
-                         round(cx + knob_r), round(cy + knob_r),
+        self.create_oval(int(cx - knob_r), int(cy - knob_r),
+                         int(cx + knob_r), int(cy + knob_r),
                          fill="#FFFFFF", outline=self.KNOB_BORDER, width=1)
 
 
@@ -617,7 +625,7 @@ class IconBadge(tk.Canvas):
     """
 
     def __init__(self, parent, kind, size=26, page_bg=COLOR_CARD,
-                 tint=COLOR_PRIMARY_SOFT, color=COLOR_PRIMARY):
+                 tint=COLOR_PRIMARY_SOFT, color=COLOR_PRIMARY_HOVER):
         s = S(size)
         super().__init__(parent, width=s, height=s, bg=page_bg,
                          highlightthickness=0, bd=0)
@@ -629,7 +637,7 @@ class IconBadge(tk.Canvas):
         """图标按尺寸等比绘制（u = 单位长度），高 DPI 下自动放大不变形。"""
         c = color
         u = s / 26.0                      # 设计基准：26px
-        w = max(1, round(1.6 * u))
+        w = max(2, int(round(2.0 * u)))   # 细线在浅底上发虚，笔画至少 2px
         cx = cy = s / 2
 
         def px(v):
