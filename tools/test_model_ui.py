@@ -141,6 +141,9 @@ def test_remove_logic():
 def test_ui_states():
     print("\n=== 3. 界面状态与进度显示 ===")
     sw.messagebox = AutoAnswer
+    # 界面弹窗已统一走 app.dialogs（不再用系统 messagebox）：这里打桩自动应答
+    sw.dialogs.ask = lambda *a, **k: True
+    sw.dialogs.tell = lambda *a, **k: None
     service = HotkeyService(notify=lambda t, m: None)
     service.register_hotkey()
     settings = sw.SettingsWindow(service)

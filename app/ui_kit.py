@@ -184,6 +184,26 @@ _RENDER_CACHE: dict = {}
 _RENDER_CACHE_MAX = 96
 
 
+def bind_photo_cleanup(widget, attr: str = "_photo") -> None:
+    """控件销毁时立刻释放 PhotoImage 引用。
+
+    为什么要这个（2026-09-30 实测）：PhotoImage 的 __del__ 会去调用 Tk 删图片。
+    如果它拖到控件/解释器销毁之后才被回收，这个调用就会失败并打印
+    "main thread is not in main loop"（虽然无害，但每次关窗都刷一屏噪音）。
+    在 <Destroy> 时主动置空引用，回收就发生在解释器还活着的时候。
+    """
+    def _on_destroy(_event=None):
+        try:
+            setattr(widget, attr, None)
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        widget.bind("<Destroy>", _on_destroy, add="+")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _cached_png(key, build_image):
     """带缓存生成 PNG 字节。
 
@@ -421,6 +441,7 @@ class _CanvasBox(tk.Frame):
         # 也就不会触发 <Configure> —— 若初始高度太小（内容在下面）就会"卡住长不高"，
         # 卡片整块不可见。所以需要定时校准；但**只有尺寸/配色真的变了才重画**，
         # 并在稳定后退避到 1 秒一次（2026-09-29 实测：改前空闲时每秒重画 ~115 次）。
+        bind_photo_cleanup(self)
         self.after(60, self._watch)
 
     def _watch(self) -> None:
@@ -536,9 +557,9 @@ class RoundedCard(_CanvasBox):
     """圆角卡片：Canvas 画圆角底 + 描边 + 轻阴影，内容放进 .body（照常 pack）。"""
 
     def __init__(self, parent, page_bg=COLOR_PAGE, fill=COLOR_CARD, radius=RADIUS_CARD,
-                 pad=PAD_CARD, shadow=True):
+                 pad=PAD_CARD, shadow=True, fit_width=False):
         super().__init__(parent, fill=fill, border=COLOR_BORDER, radius=radius, pad=pad,
-                         page_bg=page_bg, shadow=shadow)
+                         page_bg=page_bg, shadow=shadow, fit_width=fit_width)
         self.body = self.inner          # 业务代码把控件 pack 进 .body
 
 
@@ -578,6 +599,7 @@ class RoundedButton(tk.Canvas):
         self.bind("<Leave>", self._on_leave)
         self.bind("<ButtonPress-1>", self._on_press)
         self.bind("<ButtonRelease-1>", self._on_release)
+        bind_photo_cleanup(self)
         self._draw()
 
     # ---- 交互
@@ -765,6 +787,7 @@ class ToggleSwitch(tk.Canvas):
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self._var.trace_add("write", lambda *_: self._draw())
+        bind_photo_cleanup(self)
         self._draw()
 
     def _on_enter(self, _e=None) -> None:
@@ -846,6 +869,7 @@ class IconBadge(tk.Canvas):
         self._size = s
         # 记录设计笔画宽度：矢量与超采样两条路径共用，自检脚本据此断言"笔画 ≥2px"
         self.stroke_width = max(2, int(round(2.0 * (s / 26.0))))
+        bind_photo_cleanup(self)
         photo = render_icon_badge(self, kind, s, tint, color, S(7))
         if photo is not None:
             self._photo = photo

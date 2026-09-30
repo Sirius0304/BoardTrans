@@ -34,17 +34,24 @@ log = get_logger()
 # ui_kit（自绘圆角卡片/按钮/开关的视觉套件）同样依赖 tkinter，一起放在兜底里。
 try:
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from tkinter import ttk
     from . import ui_kit as ui
     TK_AVAILABLE = True
     TK_IMPORT_ERROR = ""
 except Exception as _exc:  # noqa: BLE001
     tk = None
-    messagebox = None
     ttk = None
     ui = None
     TK_AVAILABLE = False
     TK_IMPORT_ERROR = str(_exc)
+
+# 统一风格的对话框（替代系统 messagebox，见 app/dialogs.py）。
+# 注意：本程序**不再使用 tkinter.messagebox** —— 原生弹窗是系统样式，与设置界面
+# 的自绘视觉不一致（2026-09-30 统一）。
+try:
+    from . import dialogs
+except Exception:  # noqa: BLE001
+    dialogs = None
 
 # ----------------------------------------------------------------- 外观常量
 
@@ -1334,17 +1341,17 @@ class SettingsWindow:
         if busy:
             names = "、".join(self._title_of(k) for k in busy)
             if busy == ["zh_en"] and key == "en_ja":
-                messagebox.showinfo(
-                    "基础模型正在下载",
+                dialogs.tell(
+                    self.root, "基础模型正在下载",
                     "「中译英」基础模型正在下载中。\n\n"
                     "等它下载完成后，再点「中译日」的下载按钮即可 —— 那时只会下载日文模型，"
                     "不会再重复下载一遍基础模型。",
-                    parent=self.root)
+                    tone="info")
             else:
-                messagebox.showinfo(
-                    "正在下载中",
+                dialogs.tell(
+                    self.root, "正在下载中",
                     f"「{names}」正在下载，请等它完成后再试。",
-                    parent=self.root)
+                    tone="info")
             return
 
         if self._download_threads.get(key) and self._download_threads[key].is_alive():
@@ -1359,7 +1366,7 @@ class SettingsWindow:
                "无法从断点接续，不过加速后整体耗时已经短很多）。")
         if need_base:
             tip += "\n\n注意：日文方向还需要「中译英」基础模型（约 71 MB），本次会一并下载。"
-        if not messagebox.askokcancel("开始下载模型", tip, parent=self.root):
+        if not dialogs.ask(self.root, "开始下载模型", tip, ok_text="开始下载"):
             return
 
         cancel = threading.Event()
@@ -1527,7 +1534,8 @@ class SettingsWindow:
         lines.append("")
         lines.append("删除后如果还需要，可以在这里重新下载。")
 
-        if not messagebox.askokcancel("删除模型", "\n".join(lines), icon="warning", parent=self.root):
+        if not dialogs.ask(self.root, "删除模型", "\n".join(lines), ok_text="删除",
+                           tone="err", danger=True):
             return
 
         try:
@@ -1550,43 +1558,43 @@ class SettingsWindow:
                 detail += [f"  · {p}（{why}）" for p, why in failed]
                 self._model_status[key] = {"status": "stale", "percent": 0,
                                            "error": "部分文件仍被占用"}
-                messagebox.showwarning(
-                    "删除未完成",
+                dialogs.tell(
+                    self.root, "删除未完成",
                     f"已清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB。\n\n"
                     "但以下文件没能删掉：\n" + "\n".join(detail[:8]) +
                     "\n\n常见原因是文件正被占用。可以退出软件后手动删除，"
                     "或在设置里再点一次「重试删除」。",
-                    parent=self.root)
+                    tone="warn")
             else:
                 self._model_status.pop(key, None)
                 missing = models.missing_for_target(cfg.get("target_lang", "en"))
                 if missing:
                     names = "、".join(next(i["title"] for i in MODEL_CARDS if i["key"] == m)
                                       for m in missing)
-                    messagebox.showwarning(
-                        "已删除，但有影响",
+                    dialogs.tell(
+                        self.root, "已删除，但有影响",
                         f"删除完成：共清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB。\n\n"
                         f"当前目标语言所需的「{names}」模型已缺失，"
                         "现在按快捷键会提示模型未就绪，请重新下载后再使用。",
-                        parent=self.root)
+                        tone="warn")
                 else:
-                    messagebox.showinfo(
-                        "删除完成",
+                    dialogs.tell(
+                        self.root, "删除完成",
                         f"删除完成：共清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB 磁盘空间。",
-                        parent=self.root)
+                        tone="ok")
         except PermissionError:
             self._model_status[key] = {"status": "stale", "percent": 0, "error": "文件被占用"}
-            messagebox.showerror(
-                "无法删除",
+            dialogs.tell(
+                self.root, "无法删除",
                 "模型文件正在被占用，删除没有执行。\n\n"
                 "请先把目标语言切到另一个方向，或退出软件后手动删除该文件夹，"
                 "然后再回到设置里点一次「重试删除」。",
-                parent=self.root)
+                tone="err")
         except Exception as exc:  # noqa: BLE001
             log.exception("删除模型失败")
             self._model_status[key] = {"status": "stale", "percent": 0,
                                        "error": self._friendly_error(exc)[:20]}
-            messagebox.showerror("删除失败", self._friendly_error(exc), parent=self.root)
+            dialogs.tell(self.root, "删除失败", self._friendly_error(exc), tone="err")
         finally:
             self._refresh_models()
 
@@ -1680,26 +1688,28 @@ class SettingsWindow:
         self._show_notice(tip, "ok")
 
     def _on_cancel(self) -> None:
-        if self._dirty and not messagebox.askokcancel(
-                "放弃修改", "有未保存的修改，关闭后会丢弃，确定吗？", parent=self.root):
+        if self._dirty and not dialogs.ask(
+                self.root, "放弃修改", "有未保存的修改，关闭后会丢弃，确定吗？",
+                ok_text="放弃修改", tone="warn"):
             return
         self._load_from_config(force=True)
         self._hide()
 
     def _on_window_close(self) -> None:
         """点右上角关闭：等同「取消」（有改动先确认），窗口只是隐藏，软件继续运行。"""
-        if self._dirty and not messagebox.askokcancel(
-                "放弃修改", "有未保存的修改，关闭后会丢弃，确定吗？", parent=self.root):
+        if self._dirty and not dialogs.ask(
+                self.root, "放弃修改", "有未保存的修改，关闭后会丢弃，确定吗？",
+                ok_text="放弃修改", tone="warn"):
             return
         self._load_from_config(force=True)
         self._hide()
 
     def _on_restore_defaults(self) -> None:
-        if not messagebox.askokcancel(
-                "恢复默认设置",
+        if not dialogs.ask(
+                self.root, "恢复默认设置",
                 "将把快捷键恢复为 Alt+J、翻译档位恢复为「高速度」、目标语言恢复为「英文」。\n\n"
                 "注意：这只会改回窗口里的值，点「保存」后才真正生效。",
-                icon="warning", parent=self.root):
+                ok_text="恢复默认", tone="warn"):
             return
         self._pending_hotkey = DEFAULT_HOTKEY
         self._pending_quality = "fast"
@@ -1722,6 +1732,4 @@ class SettingsWindow:
         self.service.reload_config()
         if self._last_config_snapshot:
             self._last_config_snapshot = tuple(self._last_config_snapshot[:3]) + (True,)
-        self._mark_dirty()
-        messagebox.showinfo("已恢复默认值", "窗口里的设置已恢复为默认，别忘了点「保存」让它生效。",
-                            parent=self.root)
+        self._mark_dirty()      # 底部「未保存」提示条会给出反馈，不再弹第二次提示

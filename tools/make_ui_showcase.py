@@ -32,6 +32,9 @@ class AutoAnswer:
 
 
 sw.messagebox = AutoAnswer
+# 界面弹窗已统一走 app.dialogs（不再用系统 messagebox）：这里打桩自动应答
+sw.dialogs.ask = lambda *a, **k: True
+sw.dialogs.tell = lambda *a, **k: None
 original = dict(config.load())
 service = HotkeyService(notify=lambda t, m: None)
 settings = sw.SettingsWindow(service)

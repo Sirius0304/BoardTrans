@@ -63,6 +63,9 @@ def sha256(path):
 
 def main():
     sw.messagebox = AutoAnswer
+    # 界面弹窗已统一走 app.dialogs（不再用系统 messagebox）：这里打桩自动应答
+    sw.dialogs.ask = lambda *a, **k: True
+    sw.dialogs.tell = lambda *a, **k: None
     archive = os.path.join(paths.models_dir(), "zh_en.argosmodel")
     backup = archive + ".notifytest-bak"
     pkg = models.model_dir("zh_en")

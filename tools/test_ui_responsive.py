@@ -78,6 +78,9 @@ def install_cross_thread_detector(record):
 
 def main():
     sw.messagebox = AutoAnswer
+    # 界面弹窗已统一走 app.dialogs（不再用系统 messagebox）：这里打桩自动应答
+    sw.dialogs.ask = lambda *a, **k: True
+    sw.dialogs.tell = lambda *a, **k: None
     original = dict(config.load())
     log_file = paths.log_path()
     log_before = os.path.getsize(log_file) if os.path.exists(log_file) else 0

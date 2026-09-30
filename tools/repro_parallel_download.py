@@ -46,6 +46,9 @@ class AutoAnswer:
 
 def main():
     sw.messagebox = AutoAnswer
+    # 界面弹窗已统一走 app.dialogs（不再用系统 messagebox）：这里打桩自动应答
+    sw.dialogs.ask = lambda *a, **k: True
+    sw.dialogs.tell = lambda *a, **k: None
 
     # ---- 打桩：把真实下载换成可控的假下载 ----
     download_calls = []           # 记录每个模型被下载了几次
