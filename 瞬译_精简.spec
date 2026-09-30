@@ -63,7 +63,9 @@ a = Analysis(
     [PROJECT + r"\run_stage2.py"],
     pathex=[PROJECT],
     binaries=binaries,
-    datas=[],
+    # app_icon.ico 同时作为「本程序自有标记」放进包内：
+    # 启动时据此识别并清理自己遗留的 _MEI* 解包目录（只删带此标记的）
+    datas=[(PROJECT + r"\app_icon.ico", ".")],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
