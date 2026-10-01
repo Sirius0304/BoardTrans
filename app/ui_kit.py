@@ -818,23 +818,36 @@ class TextLabel(tk.Label):
         if cnf is not None and isinstance(cnf, dict):
             kw = {**cnf, **kw}
         need = False
+        # 值没变就**不重渲染**（2026-10-01）：刷新路径（心跳同步、状态轮询）可能反复
+        # configure 同一段文案，而重渲染一张文字图约 3ms —— 白烧 CPU，也会让界面发涩。
+        # 另外 text 不传给 Tk：图片模式下 Tk 的 -text 必须保持空，否则文字会盖在图上。
         if "text" in kw:
-            self._text = kw.pop("text")
-            need = True
+            value = kw.pop("text")
+            if value != self._text:
+                self._text = value
+                need = True
         if "font" in kw:
-            self._font_name = kw.pop("font")
-            need = True
+            value = kw.pop("font")
+            if value != self._font_name:
+                self._font_name = value
+                need = True
         if "fg" in kw:
-            self._fg = kw.pop("fg")
-            need = True
+            value = kw.pop("fg")
+            if value != self._fg:
+                self._fg = value
+                need = True
         if "foreground" in kw:
-            self._fg = kw.pop("foreground")
-            need = True
+            value = kw.pop("foreground")
+            if value != self._fg:
+                self._fg = value
+                need = True
         if "wraplength" in kw:
-            self._wraplength = kw.pop("wraplength") or 0
+            value = kw.pop("wraplength") or 0
+            if value != self._wraplength:
+                self._wraplength = value
+                need = True
             # 同时交给 Tk：兜底（Pillow 缺失）时会退回原生文字渲染，那时靠它换行
             kw["wraplength"] = self._wraplength
-            need = True
         if "justify" in kw:
             self._justify = kw.pop("justify")
         if cnf is not None:

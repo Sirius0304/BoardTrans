@@ -218,6 +218,9 @@ class SettingsWindow:
         self.service = service
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
+        # 保护"启动窗口线程"这一步：预热与用户点「设置」可能同时发生，
+        # 不加锁会各起一个窗口线程（两个 Tk 解释器 / 两个窗口）
+        self._thread_lock = threading.Lock()
         self._ready = threading.Event()
 
         # ---- 界面状态 ----
@@ -248,6 +251,33 @@ class SettingsWindow:
         self._ensure_thread()
         self._queue.put(("show", None))
 
+    def prewarm(self, delay: float = 0.6) -> None:
+        """**提前**把界面建好（窗口保持隐藏），让首次点「设置」时瞬间弹出。
+
+        为什么需要（2026-10-01 报障"首次打开设置界面明显卡顿"）：界面原本是**懒加载**的
+        —— 第一次点「设置」时才现启动窗口线程、创建 Tk、构建整个界面（含 31 张文字超采样
+        图与 20 多个自绘组件底图），这些开销全落在用户的等待期里。实测：首次 open()
+        到界面就绪 **270ms**，而第二次打开只要 **70ms**（只等显示）。程序启动后在后台先
+        建好，首次打开的感受就与第二次一致。
+
+        delay：启动路径上还有热键注册、模型检查等更紧要的事，先让它们跑完再预热，
+        避免抢 CPU；预热本身在独立线程里，不会拖慢托盘出现。
+        """
+        if not TK_AVAILABLE:
+            return
+        if self._thread is not None and self._thread.is_alive():
+            return
+
+        def _delayed() -> None:
+            try:
+                if delay > 0:
+                    time.sleep(delay)
+                self._ensure_thread()
+            except Exception:  # noqa: BLE001
+                log.exception("设置窗口预热失败")
+
+        threading.Thread(target=_delayed, name="shunyi-prewarm", daemon=True).start()
+
     @staticmethod
     def _warn_no_tkinter() -> None:
         """当前 Python 没带 tkinter 时，给一个看得懂的弹窗而不是报错。"""
@@ -276,16 +306,19 @@ class SettingsWindow:
     # ---------------------------------------------------------- 线程启动
 
     def _ensure_thread(self) -> None:
-        """确保窗口线程已启动。
+        """确保窗口线程已启动（并发安全：预热与 open 可能同时进来）。
 
         等待上限 3 秒（原 8 秒）：真出问题时也不该把调用方（托盘线程/测试）按住 8 秒
         不放 —— 那本身就是"界面卡死"的症状。超时只记日志，不影响后续调用。
         """
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._ready.clear()
-        self._thread = threading.Thread(target=self._run, name="shunyi-settings", daemon=True)
-        self._thread.start()
+        with self._thread_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._ready.clear()
+            self._thread = threading.Thread(target=self._run, name="shunyi-settings",
+                                            daemon=True)
+            self._thread.start()
+        # 等待放在锁外：否则预热线程持锁干等，用户点「设置」时会被挡住
         if not self._ready.wait(timeout=3):
             log.warning("设置窗口线程启动超过 3 秒仍未就绪（后面的调用会排进队列等待）")
 
@@ -295,12 +328,15 @@ class SettingsWindow:
             # 必须在创建任何窗口之前声明 DPI 感知（否则 Windows 位图拉伸 → 全糊）
             ui.enable_dpi_awareness()
             self.root = tk.Tk()
+            # 立刻隐藏：Tk 根窗口创建后默认就是可见的，而下面还要建几十个控件、
+            # 渲染二十多张自绘/文字图 —— 不先隐藏的话，屏幕上会先闪一个空白/半成品
+            # 窗口出来（预热时更是全程可见）。真正的显示交给 _show() 的 deiconify。
+            self.root.withdraw()
             self.root.title("瞬译 · 设置")
             self.root.configure(bg=COLOR_BG)
             self._apply_theme()
             self._build_ui()
             self._load_from_config(force=True)
-            self.root.withdraw()                      # 初始隐藏，等托盘点「设置」
             self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
             self._refresh_models()
             self._ready.set()
@@ -1003,7 +1039,9 @@ class SettingsWindow:
             self.root.after(280, lambda: self.root.attributes("-topmost", False))
         except Exception:  # noqa: BLE001
             pass
-        self._refresh_models()
+        # 刷新模型状态要读磁盘（列目录 / 算占用），放在 deiconify 之前会把"窗口出现"
+        # 这一步拖慢；改成等窗口先画出来、事件循环空下来再做。
+        self.root.after_idle(self._refresh_models)
 
     def _hide(self) -> None:
         # 收起窗口时也把提醒条收掉：否则下次打开会看到上次残留的过期提醒
