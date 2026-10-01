@@ -206,6 +206,50 @@ def main():
     check(f"设置窗口内的弹窗调用点 ≥ 10 处（实测 {len(tone_map)}）", len(tone_map) >= 10,
           str(len(tone_map)))
 
+    print("\n=== E. 「恢复默认设置」确认框：居中 + 无说明文字 + 两个按钮 ===")
+
+    def probe_restore_dialog():
+        root = settings.root
+        top, _r, _c = dialogs._build(
+            root, "恢复默认设置", "",
+            [{"text": "取消", "value": "cancel", "kind": "secondary"},
+             {"text": "恢复默认", "value": "ok", "kind": "primary"}],
+            "warn", "ok")
+        dialogs._center_on_parent(top, root)
+        # 真实使用时由 wait_window 的事件循环完成收敛；这里手动跑几轮
+        for _ in range(8):
+            top.update_idletasks()
+            top.update()
+            time.sleep(0.08)
+        texts, buttons = [], []
+
+        def walk(w):
+            for c in w.winfo_children():
+                if isinstance(c, ui.TextLabel):
+                    texts.append(str(c.cget("text")))
+                if isinstance(c, ui.RoundedButton):
+                    buttons.append(str(c.cget("text")))
+                walk(c)
+
+        walk(top)
+        off = (top.winfo_rootx() + top.winfo_reqwidth() // 2
+               - (root.winfo_rootx() + root.winfo_width() // 2),
+               top.winfo_rooty() + top.winfo_reqheight() // 2
+               - (root.winfo_rooty() + root.winfo_height() // 2))
+        out = {"texts": texts, "buttons": buttons, "off": off,
+               "req": (top.winfo_reqwidth(), top.winfo_reqheight())}
+        top.destroy()
+        return out
+
+    got = settings.run_in_ui(probe_restore_dialog, timeout=10) or {}
+    check("弹窗里只剩标题一处文字（说明文字已移除）",
+          got.get("texts") == ["恢复默认设置"], str(got.get("texts")))
+    check("只有「恢复默认」与「取消」两个按钮",
+          set(got.get("buttons") or []) == {"取消", "恢复默认"}, str(got.get("buttons")))
+    off = got.get("off") or (999, 999)
+    check("弹窗居于设置窗口正中（客户区中心对齐，误差 ≤2px）",
+          abs(off[0]) <= 2 and abs(off[1]) <= 2, f"偏移 Δx={off[0]} Δy={off[1]}")
+
     settings.shutdown()
     time.sleep(0.5)
     config.update(**{k: original[k] for k in original})

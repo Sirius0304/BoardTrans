@@ -1735,10 +1735,10 @@ class SettingsWindow:
         self._hide()
 
     def _on_restore_defaults(self) -> None:
+        # 简洁确认框：只要标题 + 「恢复默认 / 取消」两个按钮，不写说明文字 ——
+        # 标题已经说清要做什么，再堆一段"会改哪几项"反而让人多读一遍（2026-10-01 调整）。
         if not dialogs.ask(
-                self.root, "恢复默认设置",
-                "将把快捷键恢复为 Alt+J、翻译档位恢复为「高速度」、目标语言恢复为「英文」。\n\n"
-                "注意：这只会改回窗口里的值，点「保存」后才真正生效。",
+                self.root, "恢复默认设置", "",
                 ok_text="恢复默认", tone="warn"):
             return
         self._pending_hotkey = DEFAULT_HOTKEY

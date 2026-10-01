@@ -31,21 +31,49 @@ def _accent_color(tone: str) -> str:
 
 
 def _center_on_parent(top: tk.Toplevel, master) -> None:
-    """把对话框摆到父窗口正中（父窗口还没测量出来时就退回屏幕居中）。"""
+    """把对话框摆到父窗口正中（父窗口测不到时退回屏幕居中）。
+
+    三个坑（2026-10-01 一次性修掉，之前弹窗会明显偏出中心）：
+      1) 卡片是 Canvas 自绘、高度靠 `<Configure>` 自适应，尺寸要一两轮事件循环才收敛
+         —— 按中间值（实测 26×56）算位置必然歪，所以尺寸没撑开前先不动手；
+      2) `<Configure>` 由窗口管理器**异步**派发，得绑事件等它来，而不是"跑几轮 update"；
+      3) Tk 的 `wm geometry` 位置指的是**窗口框架**（含标题栏/边框）左上角，而
+         `winfo_rootx/rooty` 返回**客户区**坐标，两者差一个边框 —— 实测横向 8px、纵向 31px。
+         关键：这个差值 = `winfo_rootx − winfo_x`，**与窗口当前位置无关**，
+         量一次直接补偿即可（不要拿"目标位置"去反复迭代，那会来回漂移）。
+    """
+    state = {"done": False}
+
+    def _place(*_event) -> None:
+        if state["done"]:
+            return
+        try:
+            w, h = top.winfo_reqwidth(), top.winfo_reqheight()
+            if w < 40 or h < 40:
+                return                          # 卡片还没撑开，等下一轮
+            try:
+                px, py = master.winfo_rootx(), master.winfo_rooty()
+                pw, ph = master.winfo_width(), master.winfo_height()
+                if pw < 50 or ph < 50:
+                    raise ValueError("父窗口尺寸不可用")
+            except Exception:  # noqa: BLE001
+                px, py = 0, 0
+                pw, ph = top.winfo_screenwidth(), top.winfo_screenheight()
+            # 想让"客户区中心"落在父窗口中心
+            want_x = max(0, px + (pw - w) // 2)
+            want_y = max(0, py + (ph - h) // 2)
+            off_x = top.winfo_rootx() - top.winfo_x()
+            off_y = top.winfo_rooty() - top.winfo_y()
+            top.geometry(f"+{max(0, want_x - off_x)}+{max(0, want_y - off_y)}")
+            state["done"] = True
+        except Exception:  # noqa: BLE001
+            pass
+
     try:
         top.update_idletasks()
-        w, h = top.winfo_reqwidth(), top.winfo_reqheight()
-        try:
-            px, py = master.winfo_rootx(), master.winfo_rooty()
-            pw, ph = master.winfo_width(), master.winfo_height()
-            if pw < 50 or ph < 50:
-                raise ValueError("父窗口尺寸不可用")
-        except Exception:  # noqa: BLE001
-            px, py = 0, 0
-            pw, ph = top.winfo_screenwidth(), top.winfo_screenheight()
-        x = max(0, px + (pw - w) // 2)
-        y = max(0, py + (ph - h) // 3)
-        top.geometry(f"+{x}+{y}")
+        _place()
+        top.bind("<Configure>", _place, add="+")
+        top.after(200, _place)          # 兜底：万一 <Configure> 没来（例如尺寸恰好没变）
     except Exception:  # noqa: BLE001
         pass
 
@@ -86,10 +114,13 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str):
     text_box.pack(side="left", fill="both", expand=True)
 
     ui.TextLabel(text_box, text=title, bg=ui.COLOR_CARD, fg=ui.COLOR_TEXT,
-             font=ui.UI_FONT_BOLD, anchor="w", justify="left").pack(fill="x")
-    ui.TextLabel(text_box, text=message, bg=ui.COLOR_CARD, fg=ui.COLOR_SUBTEXT,
-             font=ui.UI_FONT, anchor="w", justify="left",
-             wraplength=ui.S(_TEXT_WRAP)).pack(fill="x", pady=(ui.S(6), 0))
+                 font=ui.UI_FONT_BOLD, anchor="w", justify="left").pack(fill="x")
+    # message 为空时不占位：用于"只有一个明确表态"的简洁确认框
+    # （例如「恢复默认设置」—— 标题+两个按钮已经说清楚了，再堆一段说明反而啰嗦）。
+    if message:
+        ui.TextLabel(text_box, text=message, bg=ui.COLOR_CARD, fg=ui.COLOR_SUBTEXT,
+                     font=ui.UI_FONT, anchor="w", justify="left",
+                     wraplength=ui.S(_TEXT_WRAP)).pack(fill="x", pady=(ui.S(6), 0))
 
     bar = tk.Frame(body, bg=ui.COLOR_CARD)
     bar.pack(fill="x", pady=(ui.S(14), 0))
