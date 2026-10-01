@@ -51,7 +51,7 @@ def main():
     check("已删除「已恢复默认值」第二次提示", "已恢复默认值" not in sw_src,
           "源码中不应再出现该提示标题")
 
-    print("\n=== B. 恢复默认设置：只弹一次确认框 ===")
+    print("\n=== B. 恢复默认设置：不弹确认框，点了就直接生效 ===")
     original = dict(config.load())
     service = HotkeyService(notify=lambda t, m: None)
     settings = sw.SettingsWindow(service)
@@ -77,9 +77,9 @@ def main():
         time.sleep(0.4)
         settings.run_in_ui(lambda: settings._on_restore_defaults())
         time.sleep(0.5)
-        check(f"恢复默认设置只弹 1 次确认框（实测 {len(calls['ask'])} 次）",
-              len(calls["ask"]) == 1, str([c[0] for c in calls["ask"]]))
-        check(f"恢复默认设置不再弹第二次提示（实测 {len(calls['tell'])} 次）",
+        check(f"恢复默认不再弹任何确认框（实测 {len(calls['ask'])} 次）",
+              len(calls["ask"]) == 0, str([c[0] for c in calls["ask"]]))
+        check(f"也不弹结果提示（实测 {len(calls['tell'])} 次）",
               len(calls["tell"]) == 0, str([c[0] for c in calls["tell"]]))
         holder = {}
 
@@ -87,13 +87,30 @@ def main():
             holder["hotkey"] = settings._pending_hotkey
             holder["quality"] = settings._pending_quality
             holder["dirty"] = settings._dirty
+            cfg = config.load()
+            holder["cfg"] = (cfg.get("hotkey"), cfg.get("quality"), cfg.get("target_lang"),
+                             cfg.get("idle_unload_minutes"), cfg.get("notify_enabled"))
 
         settings.run_in_ui(read_state)
-        check("恢复默认确实生效（快捷键 Alt+J / 档位 fast）",
+        check("界面值已恢复默认（快捷键 Alt+J / 档位 fast）",
               holder.get("hotkey") == "alt+j" and holder.get("quality") == "fast",
               f"{holder.get('hotkey')} / {holder.get('quality')}")
-        check("恢复默认后状态回到默认（不再标脏，无需第二次提示）",
+        check("**配置已立刻落盘生效**（不需要用户再点「保存」）",
+              holder.get("cfg") == ("alt+j", "fast", "en", 15, True), str(holder.get("cfg")))
+        check("恢复后不留「未保存」标记（因为已经生效了）",
               holder.get("dirty") is False, f"dirty={holder.get('dirty')}")
+
+        # 关键：去掉确认框后，"其他设置项的保存与应用"必须照常工作
+        def change_then_save():
+            settings._quality_var.set("quality")
+            settings._mark_dirty()
+            settings._on_save()
+
+        settings.run_in_ui(change_then_save)
+        time.sleep(0.6)
+        check("恢复默认之后，其他设置项仍能正常保存生效（改档位 → 保存）",
+              config.load().get("quality") == "quality",
+              f"quality={config.load().get('quality')}")
     finally:
         dialogs.ask, dialogs.tell = real_ask, real_tell
         settings.run_in_ui(lambda: settings._load_from_config(force=True))
@@ -193,9 +210,10 @@ def main():
         tone_map.append((m.group(2), m.group(1), tone.group(1) if tone else "info"))
     expected = {
         "删除模型": ("ask", "err"), "删除完成": ("tell", "ok"), "无法删除": ("tell", "err"),
-        "删除失败": ("tell", "err"), "恢复默认设置": ("ask", "warn"),
+        "删除失败": ("tell", "err"),
         "放弃修改": ("ask", "warn"), "开始下载模型": ("ask", "info"),
     }
+    # 注：「恢复默认设置」2026-10-01 起**不再弹确认框**（点了直接生效），故不在此表
     problems = []
     for title, kind, tone in tone_map:
         if title in expected:
@@ -206,7 +224,9 @@ def main():
     check(f"设置窗口内的弹窗调用点 ≥ 10 处（实测 {len(tone_map)}）", len(tone_map) >= 10,
           str(len(tone_map)))
 
-    print("\n=== E. 「恢复默认设置」确认框：居中 + 无说明文字 + 两个按钮 ===")
+    print("\n=== E. 无边框极简确认框能力（dialogs frameless，通用能力）===")
+    # 注：「恢复默认设置」2026-10-01 起改成**点了直接生效、不弹框**，
+    # 所以这里改为直接验证 dialogs 的 frameless 能力本身（其他极简确认场景可用）。
 
     def probe_restore_dialog():
         root = settings.root

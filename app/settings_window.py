@@ -1735,14 +1735,14 @@ class SettingsWindow:
         self._hide()
 
     def _on_restore_defaults(self) -> None:
-        # 极简确认框（2026-10-01 按主人给的参考样式定稿）：
-        #   * 只要「强调条 + 标题 + 两个按钮」，不写说明文字（标题已经说清要做什么）；
-        #   * frameless=True —— 连 Windows 标题栏都不要，弹窗就是那张圆角卡片；
-        #     顺带没有"×"，用户只能在「恢复默认 / 取消」里明确选一个。
-        if not dialogs.ask(
-                self.root, "恢复默认设置", "",
-                ok_text="恢复默认", tone="warn", frameless=True):
-            return
+        """一键恢复默认：**直接生效**，不再弹二次确认（2026-10-01 按主人要求）。
+
+        原来的流程是"弹确认框 → 只改界面上的值 → 用户还得再点一次「保存」"，既多两步，
+        又容易让人以为"点了恢复默认却没变"（尤其那句"点「保存」后才真正生效"的说明
+        文字我们已经删掉了）。现在点了就恢复并**立刻写盘**。
+
+        其他设置项的保存与应用不受影响：它们仍然走「保存」按钮那条路。
+        """
         self._pending_hotkey = DEFAULT_HOTKEY
         self._pending_quality = "fast"
         if self._recording:
@@ -1759,9 +1759,13 @@ class SettingsWindow:
             self._notify_enabled_var.set(True)
         finally:
             self._syncing = False
-        # 通知开关是"立即生效"型（不参与保存批量），所以恢复默认值也要立刻落盘
-        config.update(notify_enabled=True)
+        # 一次性落盘 + 让服务重载：恢复默认本身就是"已保存"状态，不需要再点「保存」
+        config.update(hotkey=DEFAULT_HOTKEY, quality="fast", target_lang="en",
+                      idle_unload_minutes=15, notify_enabled=True)
         self.service.reload_config()
         if self._last_config_snapshot:
-            self._last_config_snapshot = tuple(self._last_config_snapshot[:3]) + (True,)
-        self._mark_dirty()      # 底部「未保存」提示条会给出反馈，不再弹第二次提示
+            # 免得心跳轮询把这次写入当成"别处改了配置"，又同步一遍
+            self._last_config_snapshot = (DEFAULT_HOTKEY, "fast", "en", True, True)
+        # 此刻界面值已与配置一致 → 这一步不会留下"未保存"标记
+        # （_mark_dirty 是拿界面值和配置值**实际比较**出来的，不是粘滞标记）
+        self._mark_dirty()
