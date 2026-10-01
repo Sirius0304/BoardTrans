@@ -243,6 +243,33 @@ def main():
     check("原生 ClearType 确实带彩边（对照组有效）", ca > 0.01, f"{ca * 100:.2f}%")
     check("超采样渲染的彩边显著更少（不到原生的 1/3）", cb < ca / 3,
           f"原生 {ca * 100:.2f}% → 超采样 {cb * 100:.2f}%")
+
+    print("\n=== H. 换行禁则（标点不能落在行首）===")
+    cases = [
+        ("这个组合不行：必须至少包含一个 Ctrl / Alt / Shift"
+         "（不能只用单个键，否则会干扰你正常打字）。", 277),
+        ("这是一段较长的说明文字，用来验证换行是否正常（含括号、逗号，以及句号。）"
+         "后面还接着一些内容。", 200),
+        ("模型下载完成/失败、启动提示等），只记日志。默认开启；改动立即生效，"
+         "不需要点「保存」。", 220),
+    ]
+    bad = []
+    for text, limit in cases:
+        lines = ui.wrap_lines(text, limit, ruler)
+        for line in lines[1:]:                   # 第 2 行起不能以标点开头
+            if line[:1] in ui._NO_LINE_START:
+                bad.append(f"「{line[:10]}…」以「{line[:1]}」开头")
+    check(f"{len(cases)} 段文本换行后，第 2 行起都没有以标点开头", not bad,
+          "；".join(bad) or "无")
+
+    lines = ui.wrap_lines("必须至少包含一个 Ctrl / Alt / Shift，再加一个主键。", 190, ruler)
+    split_words = [w for w in ("Ctrl", "Alt", "Shift")
+                   if not any(w in ln for ln in lines)]
+    check("英文单词不会被拆到两行（Ctrl / Alt / Shift 各自完整）",
+          not split_words, str(split_words) or "无")
+
+    lines = ui.wrap_lines("快捷键要求：至少包含一个 Ctrl / Alt / Shift。", 10 ** 6, ruler)
+    check("放得下时不换行（只有 1 行）", len(lines) == 1, f"{len(lines)} 行")
     root.destroy()
 
     passed = sum(1 for _n, ok, _d in RESULTS if ok)

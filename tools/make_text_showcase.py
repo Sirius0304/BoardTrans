@@ -57,7 +57,7 @@ def shot_window(disable_text_render: bool):
             if text.startswith("瞬译 设置") and "header" not in marks:
                 marks["header"] = (w.winfo_rootx(), w.winfo_rooty(),
                                    w.winfo_width(), w.winfo_height())
-            elif "关闭后所有气泡提醒" in text and "note" not in marks:
+            elif "当前档位实测响应" in text and "note" not in marks:
                 marks["note"] = (w.winfo_rootx(), w.winfo_rooty(),
                                  w.winfo_width(), min(w.winfo_height(), 44))
             elif "模型存放位置" in text and "path" not in marks:

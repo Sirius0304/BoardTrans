@@ -549,27 +549,70 @@ def _split_tokens(text: str) -> list:
     return out
 
 
+# 中文排版禁则（避头点）：这些字符不该出现在**行首**。
+# 为什么需要（2026-10-01 报障"快捷键提示换行异常"）：断行是按像素贪心的，
+# 遇到「……Ctrl / Alt / Shift（不能只用单个键……」时，"（"正好被挤到下一行开头 ——
+# 上一行末尾空出一大块、下一行以一个孤零零的括号起头，看着就是"换行不对"。
+# 修法：让这类字符跟着上一行走（该行允许多出一个小标点的宽度，
+# slack 远小于 wraplength，不会真的溢出卡片）。
+_NO_LINE_START = set(
+    "，。、；：？！）〕〉》」』】〗”’…—～·％‰℃"
+    "（〔〈《「『【〖“‘"
+    ",.;:?!)]}>"
+)
+
+
+def _punct_slack(limit_px: int) -> int:
+    """避头点允许超出的宽度：约一个中文标点（远小于 wraplength，不会溢出容器）。"""
+    return max(12, int(limit_px * 0.05))
+
+
 def wrap_lines(text: str, limit_px: int, measure) -> list:
-    """按像素宽度贪心断行（CJK 逐字、拉丁按词）。
+    """按像素宽度贪心断行（CJK 逐字、拉丁按词），并做中文避头点处理。
 
     `measure(s) -> 像素宽` 用**与 Tk 相同的度量函数**（TextLabel 传 `font measure`），
     这样断行点、行数与原生 Label 完全一致 —— 否则换行不同会让图片高度对不上。
+
+    避头点分两步（标点绝不能独自出现在行首）：
+      1. 标点放不下时，允许这一行多出一个小标点的宽度，把它拉上来；
+      2. 万一拉不上来（这一行已经很满），把行尾的**词**让给下一行，直到断点不再
+         落在标点前 —— 否则会出现「）」或「。）」孤零零起头的情况。
     """
     lines: list = []
     for para in str(text).split("\n"):
         if limit_px <= 0:
             lines.append(para)
             continue
-        cur = ""
-        for token in _split_tokens(para):
-            if not cur:
-                cur = token
-            elif measure(cur + token) <= limit_px:
-                cur += token
-            else:
-                lines.append(cur.rstrip())
-                cur = token.lstrip() if token.strip() else ""
-        lines.append(cur.rstrip())
+        tokens = _split_tokens(para)
+        total = len(tokens)
+        start = 0
+        while start < total:
+            cur = ""
+            idx = start
+            while idx < total:
+                tok = tokens[idx]
+                if not cur:
+                    if tok.strip():          # 换行处的空格不留在行首
+                        cur = tok
+                    idx += 1
+                    continue
+                cand = cur + tok
+                if measure(cand) <= limit_px:
+                    cur, idx = cand, idx + 1
+                    continue
+                if tok[:1] in _NO_LINE_START and \
+                        measure(cand) <= limit_px + _punct_slack(limit_px):
+                    cur, idx = cand, idx + 1     # 避头点：多塞一个标点也认了
+                    continue
+                break
+            while idx < total and tokens[idx][:1] in _NO_LINE_START and idx - start > 1:
+                back = tokens[idx - 1]
+                if not (cur.endswith(back) and len(cur) > len(back)):
+                    break
+                cur = cur[: -len(back)]          # 把行尾的词让给下一行
+                idx -= 1
+            lines.append(cur.rstrip())
+            start = idx if idx > start else start + 1
     return lines or [""]
 
 

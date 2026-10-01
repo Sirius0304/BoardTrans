@@ -805,12 +805,6 @@ class SettingsWindow:
                  font=UI_FONT).pack(side="left")
         ui.ToggleSwitch(line, self._notify_enabled_var, command=self._on_notify_change,
                         page_bg=COLOR_CARD).pack(side="right")
-        ui.TextLabel(card, text="关闭后所有气泡提醒都不再弹出（翻译完成、取词失败、快捷键冲突、"
-                            "模型下载完成/失败、启动提示等），只记日志。默认开启；改动立即生效，"
-                            "不需要点「保存」。",
-                 bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
-                 anchor="w", justify="left", wraplength=ui.S(430)
-                 ).pack(fill="x", pady=(4, 0))
 
     def _on_notify_change(self) -> None:
         """用户切换「通知提醒」：**立即写盘生效**，不等「保存」。
@@ -884,12 +878,6 @@ class SettingsWindow:
                  font=UI_FONT).pack(side="left")
         ui.ToggleSwitch(line, self._idle_unload_var, command=self._on_memory_change,
                         page_bg=COLOR_CARD).pack(side="right")
-
-        self._note_box(card,
-                       "开启：挂机 15 分钟没翻译就把模型从内存里放掉，可省约 97~238 MB；"
-                       "代价是释放后下一次翻译多花约 0.15 秒（实测），基本察觉不到。\n"
-                       "关闭：模型一直留在内存里，翻译始终最快（适合经常随手翻译的人）。",
-                       "plain")
 
     def _build_hotkey_section(self, parent) -> None:
         card = self._card(parent, "快捷键", icon="hotkey")
