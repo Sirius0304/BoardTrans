@@ -26,15 +26,19 @@ BOX = {}
 
 def show():
     root = settings.root
-    root.attributes("-topmost", True)
+    root.attributes("-topmost", False)      # 别把弹窗压在下面（真实使用时 <280ms 也会取消置顶）
     root.lift()
     root.update_idletasks()
     top, result, _close = dialogs._build(
         root, "恢复默认设置", "",
         [{"text": "取消", "value": "cancel", "kind": "secondary"},
          {"text": "恢复默认", "value": "ok", "kind": "primary"}],
-        "warn", "ok", closable=False)
+        "warn", "ok", frameless=True)
     dialogs._center_on_parent(top, root)
+    try:
+        top.attributes("-topmost", True)     # 让弹窗浮在设置窗口之上（截图用）
+    except Exception:  # noqa: BLE001
+        pass
     top.update_idletasks()
     top.update()
     time.sleep(0.4)

@@ -214,7 +214,7 @@ def main():
             root, "恢复默认设置", "",
             [{"text": "取消", "value": "cancel", "kind": "secondary"},
              {"text": "恢复默认", "value": "ok", "kind": "primary"}],
-            "warn", "ok", closable=False)
+            "warn", "ok", frameless=True)
         dialogs._center_on_parent(top, root)
         # 真实使用时由 wait_window 的事件循环完成收敛；这里手动跑几轮
         for _ in range(8):
@@ -258,13 +258,13 @@ def main():
     off = got.get("off") or (999, 999)
     check("弹窗居于设置窗口正中（客户区中心对齐，误差 ≤2px）",
           abs(off[0]) <= 2 and abs(off[1]) <= 2, f"偏移 Δx={off[0]} Δy={off[1]}")
-    check("已去掉标题栏的关闭按钮（WS_SYSMENU 被清）", not got.get("has_close"),
-          f"样式 {got.get('style')}")
-    check("标题栏本身还在（WS_CAPTION 保留 → 布局不变）", bool(got.get("has_caption")),
+    check("整个标题栏都已去掉（WS_CAPTION=False，弹窗就是那张圆角卡片）",
+          not got.get("has_caption"), f"样式 {got.get('style')}")
+    check("自然也没有关闭按钮（WS_SYSMENU=False）", not got.get("has_close"),
           f"样式 {got.get('style')}")
 
     def probe_normal_dialog():
-        """默认参数（closable=True）的弹窗应当仍有正常的关闭按钮。"""
+        """默认参数（closable=True）的弹窗应当仍有正常的标题栏与关闭按钮。"""
         root = settings.root
         top, _r, _c = dialogs._build(
             root, "删除模型", "要删吗？",
@@ -280,11 +280,36 @@ def main():
             except Exception:  # noqa: BLE001
                 style = 0
         top.destroy()
-        return bool(style & 0x00080000)
+        return bool(style & 0x00080000), bool(style & 0x00C00000)
 
-    check("其他确认框（默认参数）仍带关闭按钮，没被一起改掉",
-          bool(settings.run_in_ui(probe_normal_dialog, timeout=10)),
+    normal_close, normal_caption = settings.run_in_ui(probe_normal_dialog,
+                                                      timeout=10) or (False, False)
+    check("其他确认框（默认参数）仍带关闭按钮，没被一起改掉", bool(normal_close),
           "closable 默认 True")
+    check("其他确认框仍然保留标题栏（没被一起改成无边框）", bool(normal_caption),
+          "frameless 默认 False")
+
+    def probe_keys():
+        """无边框不该影响键盘：Esc 仍应取消（模态抓取 + 焦点强制都在）。"""
+        root = settings.root
+        top, r, _c = dialogs._build(
+            root, "键盘测试", "",
+            [{"text": "取消", "value": "cancel", "kind": "secondary"},
+             {"text": "确定", "value": "ok", "kind": "primary"}],
+            "info", "ok", frameless=True)
+        try:
+            top.grab_set()
+        except Exception:  # noqa: BLE001
+            pass
+        top.focus_force()
+        top.update_idletasks()
+        top.update()
+        top.event_generate("<Escape>")
+        top.update()
+        return r.get("value")
+
+    check("无边框后 Esc 仍能取消（键盘行为没被破坏）",
+          settings.run_in_ui(probe_keys, timeout=10) == "cancel", "模拟按下 Esc")
 
     settings.shutdown()
     time.sleep(0.5)

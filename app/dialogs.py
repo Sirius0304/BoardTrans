@@ -114,14 +114,24 @@ def _center_on_parent(top: tk.Toplevel, master) -> None:
 
 
 def _build(master, title: str, message: str, buttons, tone: str, default: str,
-           closable: bool = True):
+           closable: bool = True, frameless: bool = False):
     """构建对话框并返回 (Toplevel, 结果字典, 关闭函数)。
 
-    closable=False：去掉标题栏右上角的关闭按钮，只留「确认 / 取消」两个操作
-    （用于需要用户明确表态的确认框，避免"点 × 就悄悄取消"）。
+    closable=False：去掉标题栏右上角的关闭按钮（标题栏仍在）。
+    frameless=True：**连整个标题栏都不要**（`overrideredirect`），弹窗就是那张圆角卡片
+                    —— 用于"一句话 + 两个按钮"的极简确认框（2026-10-01 按参考样式）。
+                    `overrideredirect` 必须在窗口**映射之前**设置。
     """
     top = tk.Toplevel(master)
     top.title(title)
+    if frameless:
+        try:
+            # Toplevel 一创建就已经映射了，此时再改边框样式**不生效**（窗口会照旧带标题栏，
+            # 或者干脆不显示）—— 先撤回、改完样式、等内容建好再 deiconify。
+            top.withdraw()
+            top.overrideredirect(True)
+        except Exception:  # noqa: BLE001
+            pass
     top.configure(bg=ui.COLOR_PAGE)
     top.resizable(False, False)
     try:
@@ -181,13 +191,23 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str,
     top.bind("<Escape>", lambda _e: _close("cancel"))
     top.bind("<Return>", lambda _e: _close(default))
     top.protocol("WM_DELETE_WINDOW", lambda: _close("cancel"))
-    if not closable:
-        _hide_close_button(top)
+    if frameless:
+        try:
+            top.deiconify()              # 无边框样式已设好，现在才让它露面
+            top.lift()
+            # 无边框窗口不会由系统自动给焦点，不给的话 Esc / Enter 都收不到
+            top.focus_force()
+        except Exception:  # noqa: BLE001
+            pass
+    elif not closable:
+        _hide_close_button(top)          # 无边框时本就没有关闭按钮，无需处理
     return top, result, _close
 
 
-def _run(master, title, message, buttons, tone, default, closable: bool = True) -> str:
-    top, result, _close = _build(master, title, message, buttons, tone, default, closable)
+def _run(master, title, message, buttons, tone, default,
+         closable: bool = True, frameless: bool = False) -> str:
+    top, result, _close = _build(master, title, message, buttons, tone, default,
+                                 closable, frameless)
     try:
         top.grab_set()                 # 模态：必须先处理这个框
     except Exception:  # noqa: BLE001
@@ -205,22 +225,23 @@ def _run(master, title, message, buttons, tone, default, closable: bool = True) 
 
 def ask(master, title: str, message: str, ok_text: str = "确定",
         cancel_text: str = "取消", tone: str = "info", danger: bool = False,
-        closable: bool = True) -> bool:
+        closable: bool = True, frameless: bool = False) -> bool:
     """确认框（模态）：确定返回 True，取消/关闭返回 False。
 
     danger=True 时确定按钮用红色（删除这类不可逆操作）。
-    closable=False 时不显示标题栏的关闭按钮，只留两个操作按钮。
+    closable=False 时不显示标题栏的关闭按钮；frameless=True 时连标题栏都不要。
     """
     value = _run(master, title, message,
                  [{"text": cancel_text, "value": "cancel", "kind": "secondary"},
                   {"text": ok_text, "value": "ok",
                    "kind": "danger" if danger else "primary"}],
-                 tone, "ok", closable)
+                 tone, "ok", closable, frameless)
     return value == "ok"
 
 
 def tell(master, title: str, message: str, ok_text: str = "知道了",
-         tone: str = "info", closable: bool = True) -> None:
+         tone: str = "info", closable: bool = True, frameless: bool = False) -> None:
     """提示框（模态，只有一个按钮）：用于必须让用户看到的失败/结果说明。"""
     _run(master, title, message,
-         [{"text": ok_text, "value": "ok", "kind": "primary"}], tone, "ok", closable)
+         [{"text": ok_text, "value": "ok", "kind": "primary"}], tone, "ok",
+         closable, frameless)
