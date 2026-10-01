@@ -244,6 +244,53 @@ def main():
     time.sleep(0.6)
     check("重开后没有残留的旧提醒", holder.get("visible") is False, str(holder.get("visible")))
 
+    print("\n=== J. 提示框宽度：长文案要舒展展示，且不溢出窗口 ===")
+
+    def probe_width():
+        # 这是实际最长的一条（保存 + 换快捷键），原来 430px 下必然折行、显示拥挤
+        settings._show_notice(
+            "设置已保存并立即生效，无需重启软件。\n"
+            "提示：新快捷键已经生效。如果按下去没反应，说明这个组合被别的软件抢占了"
+            "（这类冲突无法自动检测），换一个组合重新设置即可。", "ok")
+        settings.root.update_idletasks()
+        settings._notice_box.update_idletasks()
+        holder["wrap"] = int(settings._notice_label.cget("wraplength"))
+        holder["box_w"] = settings._notice_box.winfo_reqwidth()
+        holder["win_w"] = settings.root.winfo_width()
+
+    settings._queue.put(("call", probe_width))
+    time.sleep(0.9)
+    check(f"折行宽度比原来的 430 更宽（实测 {holder.get('wrap')}）",
+          (holder.get("wrap") or 0) >= 420, f"wrap={holder.get('wrap')}")
+    check("提示框不溢出窗口两侧",
+          (holder.get("box_w") or 0) <= (holder.get("win_w") or 1),
+          f"框宽 {holder.get('box_w')} vs 窗口宽 {holder.get('win_w')}")
+
+    print("\n=== K. 关窗不再弹确认框：未保存的改动直接丢弃 ===")
+
+    def dirty_then_close():
+        settings._quality_var.set("quality")
+        settings._mark_dirty()
+        holder["dirty_before"] = settings._dirty
+        holder["ask_calls"] = 0
+        real = sw.dialogs.ask
+        sw.dialogs.ask = lambda *a, **k: (
+            holder.__setitem__("ask_calls", holder["ask_calls"] + 1), False)[1]
+        try:
+            settings._on_window_close()
+        finally:
+            sw.dialogs.ask = real
+        holder["dirty_after"] = settings._dirty
+
+    settings.open()
+    time.sleep(1.5)
+    settings._queue.put(("call", dirty_then_close))
+    time.sleep(0.9)
+    check("有未保存改动时关窗，也不再弹确认框",
+          holder.get("ask_calls") == 0, f"ask 被调用 {holder.get('ask_calls')} 次")
+    check("改动确实被丢弃（界面回滚到已保存的值，不留未保存标记）",
+          holder.get("dirty_after") is False, f"dirty={holder.get('dirty_after')}")
+
     # 复位
     settings.shutdown()
     config.update(**{k: original[k] for k in original})

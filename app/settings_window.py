@@ -554,7 +554,10 @@ class SettingsWindow:
                                            shadow=True, fit_width=True)
         self._notice_label = ui.TextLabel(self._notice_box.inner, text="", bg=COLOR_OK_BG,
                                       fg=ui.COLOR_OK_TEXT, font="ShunYiSmall", anchor="w",
-                                      justify="left", wraplength=ui.S(430))
+                                      justify="left", wraplength=ui.S(470), auto_wrap=False)
+        # auto_wrap=False：小框的宽度本来就是"跟着文字走"（RoundedPanel fit_width），
+        # 若再让它按控件实际宽度回环重排，会两边互相追着变。折行宽度改由 _show_notice
+        # 按**窗口实际宽度**每次显式设定 —— 窗口宽就一行说完，窄了才折行，不溢出不拥挤。
         self._notice_label.pack(fill="x", padx=8, pady=5)
         self._notice_timer = None      # after() 的句柄，用于"新提醒顶掉旧倒计时"
         self._notice_seq = 0           # 提醒序号：防止旧定时器把新提醒提前关掉
@@ -1183,8 +1186,24 @@ class SettingsWindow:
                 pass
             self._notice_timer = None
 
+        # 折行宽度按**窗口实际宽度**算：窗口够宽就让整句一行说完（不拥挤、不畸形折行），
+        # 窗口被缩小时自动收窄，避免小框溢出窗口两侧。上限 560 防止超宽窗口里拉太长。
+        try:
+            wrap = max(280, self.root.winfo_width() - ui.S(56))
+        except Exception:  # noqa: BLE001
+            wrap = ui.S(470)
+        wrap = min(wrap, ui.S(560))
         self._notice_box.set_tone(fill, border)
-        self._notice_label.configure(text=text, bg=fill, fg=fg)
+        self._notice_label.configure(text=text, bg=fill, fg=fg, wraplength=wrap)
+        try:
+            # 文字折行宽度变了 → 小框宽度得跟着重算。
+            # 两步都不能省：① fit_width 只在 <Configure> 时调整，而这里改的是"请求宽度"、
+            # 事件不会自己来，必须显式重画；② 新图片的尺寸要先过一轮 idle 才会反映到
+            # inner 的 reqwidth 上，否则重画时读到的还是旧宽度。
+            self.root.update_idletasks()
+            self._notice_box.force_redraw()
+        except Exception:  # noqa: BLE001
+            pass
         # 贴在窗口底部：横向居中、纵向位于底部按钮行上方（小框底边锚定）。
         # 说明：调用本方法时"未保存提示条"必然已收起（三条保存路径都会先把
         # 未保存状态清掉），所以这里只需按按钮行高度让位，不会与它重叠。
@@ -1726,12 +1745,13 @@ class SettingsWindow:
         self._hide()
 
     def _on_window_close(self) -> None:
-        """点右上角关闭：等同「取消」（有改动先确认），窗口只是隐藏，软件继续运行。"""
-        if self._dirty and not dialogs.ask(
-                self.root, "放弃修改", "有未保存的修改，关闭后会丢弃，确定吗？",
-                ok_text="放弃修改", tone="warn"):
-            return
-        self._load_from_config(force=True)
+        """点右上角关闭：窗口只是隐藏，软件继续运行。
+
+        未保存的改动**直接丢弃，不再弹确认框**（2026-10-01 按主人要求）——
+        窗口底部本来就有「有未保存的修改」提示条，用户点关闭时心里有数，
+        再多一个弹窗反而每次关窗都要多点一下。
+        """
+        self._load_from_config(force=True)        # 界面回滚到配置值，下次打开是干净的
         self._hide()
 
     def _on_restore_defaults(self) -> None:
