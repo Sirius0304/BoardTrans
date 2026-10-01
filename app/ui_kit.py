@@ -563,8 +563,12 @@ _NO_LINE_START = set(
 
 
 def _punct_slack(limit_px: int) -> int:
-    """避头点允许超出的宽度：约一个中文标点（远小于 wraplength，不会溢出容器）。"""
-    return max(12, int(limit_px * 0.05))
+    """避头点允许超出的宽度：约一个中文标点。
+
+    上限卡在 16px（一个标点的大小）—— 按比例给太多的话，遇到"标点恰好卡在行尾"
+    会真的把文字顶出容器右边界；够一个标点用即可。
+    """
+    return min(16, max(10, int(limit_px * 0.03)))
 
 
 def wrap_lines(text: str, limit_px: int, measure) -> list:
@@ -770,12 +774,17 @@ class TextLabel(tk.Label):
 
     def __init__(self, parent, text: str = "", font: str = UI_FONT, fg: str = COLOR_TEXT,
                  bg: str = COLOR_CARD, wraplength: int = 0, justify: str = "center",
-                 anchor: str = "center", **kw):
+                 anchor: str = "center", auto_wrap: bool | None = None, **kw):
         self._text = text
         self._font_name = font
         self._fg = fg
         self._wraplength = wraplength or 0
         self._justify = justify
+        # auto_wrap：按控件的**实际可用宽度**换行（换了窗口尺寸也跟着变，始终贴右边界）。
+        # 默认在"给了 wraplength"时开启 —— 这类都是通栏说明文字（pack fill="x"），
+        # 宽度由父容器决定；用固定 design 值断行会在窗口变宽时右侧留白。
+        self._auto_wrap = (self._wraplength > 0) if auto_wrap is None else bool(auto_wrap)
+        self._wrapped_at = 0          # 上次断行用的可用宽度（去重用）
         # 含图片的 Label 默认 padx/pady 是 0，含文字的默认是 1（Tk 的规则）——
         # 不显式补齐就会比原生文字 Label 矮 2px、窄 2px，整体布局会跟着挪位。
         kw.setdefault("padx", 1)
@@ -784,19 +793,45 @@ class TextLabel(tk.Label):
                          justify=justify, wraplength=self._wraplength, **kw)
         self._photo = None
         bind_photo_cleanup(self)
+        if self._auto_wrap:
+            self.bind("<Configure>", self._on_configure, add="+")
         self._refresh_text()
 
     # ---- 内容刷新
     def _measure(self, line: str) -> int:
-        """用 Tk 自己的字体度量测宽（保证与原生 Label 的换行/宽度一致）。"""
+        """用 Tk 自己的字体度量测宽（与原生 Label 同源，也与兜底渲染一致）。"""
         return int(self.tk.call("font", "measure", self._font_name, line))
 
-    def _native_metrics(self, spec: dict) -> dict:
-        """多行场景：让 Tk 自己排一次版，问出它"打算占几行、每行多宽"。
+    def _avail_width(self, width: int = 0) -> int:
+        """控件的可用文字宽度 = 控件宽度 − padx − 边框（未知宽度时返回 0）。"""
+        try:
+            if not width:
+                width = int(self.winfo_width())
+            pad = 2 * (int(self.cget("padx")) + int(self.cget("borderwidth"))
+                       + int(self.cget("highlightthickness") or 0))
+            return max(0, int(width) - pad)
+        except Exception:  # noqa: BLE001
+            return 0
 
-        为什么要问 Tk：Tk 的断行比逐字贪心保守（实测同一个 wraplength 会多排 1 行），
-        照自己的断行渲染，多行 Label 会比原生矮一整行，整块界面跟着变矮变宽。
-        拿到行数与内容宽之后，按同样的行数、同样的宽度出图 —— 布局回到原样。
+    def _on_configure(self, event) -> None:
+        """控件宽度变了 → 按新的可用宽度重新断行，让文字始终铺到右边界。
+
+        只在宽度**真的变了**（≥4px）时重排：既避免渲染抖动，也防止
+        "重排→尺寸变→再触发"的回环。
+        """
+        if not self._auto_wrap or event.width <= 1:
+            return
+        avail = self._avail_width(event.width)
+        if avail <= 1 or abs(avail - self._wrapped_at) < 4:
+            return
+        self._wrapped_at = avail
+        self._refresh_text()
+
+    def _native_metrics(self, spec: dict) -> dict:
+        """【诊断用】让 Tk 自己排一次版，问出它"打算占几行、每行多宽"。
+
+        仅 `tools/diag_text_layout.py` 在用来核对差异；渲染路径**不再**参考它 ——
+        见 `_refresh_text` 里关于"为什么不再跟随 Tk 行数"的说明。
         """
         if not self._wraplength:
             return {}
@@ -831,12 +866,19 @@ class TextLabel(tk.Label):
             pad_y = max(0, int(self.cget("pady")))
         except Exception:  # noqa: BLE001
             pad_x = pad_y = 0
-        native = self._native_metrics(spec)
+        # 断行宽度以**控件实际可用宽度**为准（贴合右边界），wraplength 只作两层兜底：
+        # 控件还没布局（winfo_width 未知）时的初值、以及传给底层 tk.Label 供回退渲染用。
+        # 为什么不再"跟随 Tk 原生的行数"（2026-10-01 报障"提示文字在 3/5 宽度处就换行"）：
+        # Tk 的断行比逐字贪心保守，同一个宽度会多排 1 行；为了与它行数一致，只能把行宽
+        # 压小去凑行数 —— 结果每行只填到 3/5 就折行、右侧留一大块空白。
+        limit = int(self._wraplength) if self._wraplength else 0
+        avail = self._avail_width() if self._auto_wrap else 0
+        if avail > 1:
+            limit = avail
         photo, _w, _h = render_text(self, str(self._text), spec["family"], spec["px"],
-                                    spec["weight"], self._fg, self._wraplength,
+                                    spec["weight"], self._fg, limit,
                                     spec["linespace"], spec["ascent"], self._measure,
-                                    pad_x, pad_y, native.get("lines", 0),
-                                    native.get("width", 0))
+                                    pad_x, pad_y)
         if photo is None:
             # 兜底：退回原生 Tk 文字（回到改造前的样子，功能不受影响）
             self._photo = None

@@ -134,14 +134,31 @@ def main():
                               justify="left", anchor="w", bg="#FFFFFF")
             pairs.append((font_name, f"多行 wrap={wrap}", nat, tl, "多行"))
     root.update_idletasks()
-    bad = []
+    single_bad, multi_bad = [], []
+    n_single = sum(1 for p in pairs if p[4] == "单行")
     for font_name, tag, nat, tl, kind in pairs:
         a = (nat.winfo_reqwidth(), nat.winfo_reqheight())
         b = (tl.winfo_reqwidth(), tl.winfo_reqheight())
-        if a != b:
-            bad.append(f"{font_name}/{kind}: {a}→{b}")
-    check(f"全部 {len(pairs)} 组文字控件与原生 Label 请求尺寸完全一致", not bad,
-          "；".join(bad) if bad else f"{len(pairs)}/{len(pairs)} 一致")
+        if kind == "单行":
+            if a != b:
+                single_bad.append(f"{font_name}: {a}→{b}")
+            continue
+        # 多行：目标是"把可用宽度用足"，不再与原生 Tk 的行数/尺寸对齐 ——
+        # Tk 的断行更保守（会多排 1 行、每行只填 3/5），跟随它就会右侧留一大块空白。
+        wrap = int(tag.rsplit("=", 1)[-1])
+        span = max(1, int(ui.font_spec(tl, font_name)["linespace"]))
+        nat_lines = max(1, (a[1] - 6) // span)
+        lines = ui.wrap_lines(LONG, wrap, tl._measure)
+        widest = max(tl._measure(ln) for ln in lines)
+        if len(lines) > nat_lines:
+            multi_bad.append(f"{font_name}/{tag}: 行数 {len(lines)} > 原生 {nat_lines}")
+        # 避头点允许一个标点的悬挂量（见 ui_kit._punct_slack），其余不得超宽
+        if widest > wrap + ui._punct_slack(wrap):
+            multi_bad.append(f"{font_name}/{tag}: 最长行 {widest} 超上限 {wrap}")
+    check(f"单行文字与原生 Label 尺寸逐像素一致（{n_single} 组）", not single_bad,
+          "；".join(single_bad) or "一致")
+    check("多行文字每行不超宽、行数不多于原生（宽度用得更足）",
+          not multi_bad, "；".join(multi_bad) or "通过")
 
     print("\n=== C. 渲染质量（核心：干净、锐利、有平滑过渡）===")
     img = Image.open(io.BytesIO(data)).convert("RGBA")
@@ -270,6 +287,36 @@ def main():
 
     lines = ui.wrap_lines("快捷键要求：至少包含一个 Ctrl / Alt / Shift。", 10 ** 6, ruler)
     check("放得下时不换行（只有 1 行）", len(lines) == 1, f"{len(lines)} 行")
+
+    print("\n=== I. 换行跟随控件实际宽度（始终贴右边界）===")
+    box = tk.Frame(root, bg="#FFFFFF", width=420, height=90)
+    box.pack_propagate(False)          # 固定宽度，用来模拟不同的可用宽度
+    box.pack()
+    lbl = ui.TextLabel(box, text=LONG, font="ShunYiBase", fg="#1F2937", bg="#FFFFFF",
+                       anchor="w", justify="left", wraplength=200)
+    lbl.pack(fill="x")
+
+    def settle():
+        root.update_idletasks()
+        time.sleep(0.35)
+        root.update()
+        return lbl._photo.width() if lbl._photo else 0
+
+    w1 = settle()
+    check("按控件实际宽度出图（不再被 wraplength 卡住）", w1 > 220,
+          f"控件 {lbl.winfo_width()} → 图片 {w1}（wraplength 只有 200）")
+    box.configure(width=260)
+    w2 = settle()
+    check("控件变窄 → 重新断行（图片跟着变窄）", w2 < w1 and w2 <= 260, f"{w1} → {w2}")
+    box.configure(width=560)
+    w3 = settle()
+    check("控件变宽 → 重新断行（图片跟着变宽）", w3 > w2, f"{w2} → {w3}")
+    avail = lbl._avail_width()
+    widest = max(lbl._measure(ln) for ln in ui.wrap_lines(LONG, avail, lbl._measure))
+    check("最长行填到可用宽度的 85% 以上（不提前折行）", widest >= avail * 0.85,
+          f"最长行 {widest} / 可用 {avail} = {widest / max(1, avail):.0%}")
+    lbl.destroy()
+    box.destroy()
     root.destroy()
 
     passed = sum(1 for _n, ok, _d in RESULTS if ok)
