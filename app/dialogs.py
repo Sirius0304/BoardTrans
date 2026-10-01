@@ -16,12 +16,47 @@
 
 from __future__ import annotations
 
+import ctypes
+import os
 import tkinter as tk
 
 from . import ui_kit as ui
 
 # 说明文字折行宽度（像素，随 DPI 缩放）
 _TEXT_WRAP = 380
+
+# 窗口样式相关常量（隐藏标题栏关闭按钮时用）
+_GWL_STYLE = -16
+_WS_SYSMENU = 0x00080000
+_SWP_NOSIZE, _SWP_NOMOVE, _SWP_NOZORDER, _SWP_FRAMECHANGED = 0x1, 0x2, 0x4, 0x20
+
+
+def _hide_close_button(top: tk.Toplevel) -> None:
+    """去掉标题栏右上角的关闭按钮（标题栏与其余布局保持不变）。
+
+    做法：清掉窗口样式里的 `WS_SYSMENU`（系统菜单）—— Windows 会把"×"连同
+    标题栏左键菜单一起去掉，标题文字和标题栏本身都还在，所以**布局一点不变**。
+
+    为什么不 `overrideredirect(True)`：那会把整个标题栏干掉，窗口位置/层级/外观
+    全变，不符合"样式布局不变"。
+    """
+    if os.name != "nt":
+        return
+    try:
+        top.update_idletasks()
+        hwnd = int(top.frame(), 16)          # wm_frame() 给的是顶层窗口句柄（十六进制串）
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        style = user32.GetWindowLongW(hwnd, _GWL_STYLE)
+        if not style:
+            return
+        user32.SetWindowLongW(hwnd, _GWL_STYLE, style & ~_WS_SYSMENU)
+        # 通知系统按新样式重画非客户区，否则"×"要等下一次尺寸变化才消失
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                            _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOZORDER | _SWP_FRAMECHANGED)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _accent_color(tone: str) -> str:
@@ -78,8 +113,13 @@ def _center_on_parent(top: tk.Toplevel, master) -> None:
         pass
 
 
-def _build(master, title: str, message: str, buttons, tone: str, default: str):
-    """构建对话框并返回 (Toplevel, 结果字典, 关闭函数)。"""
+def _build(master, title: str, message: str, buttons, tone: str, default: str,
+           closable: bool = True):
+    """构建对话框并返回 (Toplevel, 结果字典, 关闭函数)。
+
+    closable=False：去掉标题栏右上角的关闭按钮，只留「确认 / 取消」两个操作
+    （用于需要用户明确表态的确认框，避免"点 × 就悄悄取消"）。
+    """
     top = tk.Toplevel(master)
     top.title(title)
     top.configure(bg=ui.COLOR_PAGE)
@@ -141,11 +181,13 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str):
     top.bind("<Escape>", lambda _e: _close("cancel"))
     top.bind("<Return>", lambda _e: _close(default))
     top.protocol("WM_DELETE_WINDOW", lambda: _close("cancel"))
+    if not closable:
+        _hide_close_button(top)
     return top, result, _close
 
 
-def _run(master, title, message, buttons, tone, default) -> str:
-    top, result, _close = _build(master, title, message, buttons, tone, default)
+def _run(master, title, message, buttons, tone, default, closable: bool = True) -> str:
+    top, result, _close = _build(master, title, message, buttons, tone, default, closable)
     try:
         top.grab_set()                 # 模态：必须先处理这个框
     except Exception:  # noqa: BLE001
@@ -162,21 +204,23 @@ def _run(master, title, message, buttons, tone, default) -> str:
 
 
 def ask(master, title: str, message: str, ok_text: str = "确定",
-        cancel_text: str = "取消", tone: str = "info", danger: bool = False) -> bool:
+        cancel_text: str = "取消", tone: str = "info", danger: bool = False,
+        closable: bool = True) -> bool:
     """确认框（模态）：确定返回 True，取消/关闭返回 False。
 
     danger=True 时确定按钮用红色（删除这类不可逆操作）。
+    closable=False 时不显示标题栏的关闭按钮，只留两个操作按钮。
     """
     value = _run(master, title, message,
                  [{"text": cancel_text, "value": "cancel", "kind": "secondary"},
                   {"text": ok_text, "value": "ok",
                    "kind": "danger" if danger else "primary"}],
-                 tone, "ok")
+                 tone, "ok", closable)
     return value == "ok"
 
 
 def tell(master, title: str, message: str, ok_text: str = "知道了",
-         tone: str = "info") -> None:
+         tone: str = "info", closable: bool = True) -> None:
     """提示框（模态，只有一个按钮）：用于必须让用户看到的失败/结果说明。"""
     _run(master, title, message,
-         [{"text": ok_text, "value": "ok", "kind": "primary"}], tone, "ok")
+         [{"text": ok_text, "value": "ok", "kind": "primary"}], tone, "ok", closable)

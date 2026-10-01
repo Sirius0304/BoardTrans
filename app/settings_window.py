@@ -1736,10 +1736,12 @@ class SettingsWindow:
 
     def _on_restore_defaults(self) -> None:
         # 简洁确认框：只要标题 + 「恢复默认 / 取消」两个按钮，不写说明文字 ——
-        # 标题已经说清要做什么，再堆一段"会改哪几项"反而让人多读一遍（2026-10-01 调整）。
+        # 标题已经说清要做什么，再堆一段"会改哪几项"反而让人多读一遍。
+        # closable=False：去掉标题栏的"×"，强制用户在两个按钮里明确选一个
+        # （2026-10-01 按主人给参考样式调整：不要角落那个不表态的关闭按钮）。
         if not dialogs.ask(
                 self.root, "恢复默认设置", "",
-                ok_text="恢复默认", tone="warn"):
+                ok_text="恢复默认", tone="warn", closable=False):
             return
         self._pending_hotkey = DEFAULT_HOTKEY
         self._pending_quality = "fast"

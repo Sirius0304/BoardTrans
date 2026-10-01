@@ -214,7 +214,7 @@ def main():
             root, "恢复默认设置", "",
             [{"text": "取消", "value": "cancel", "kind": "secondary"},
              {"text": "恢复默认", "value": "ok", "kind": "primary"}],
-            "warn", "ok")
+            "warn", "ok", closable=False)
         dialogs._center_on_parent(top, root)
         # 真实使用时由 wait_window 的事件循环完成收敛；这里手动跑几轮
         for _ in range(8):
@@ -232,11 +232,20 @@ def main():
                 walk(c)
 
         walk(top)
+        style = 0
+        if os.name == "nt":
+            try:
+                import ctypes                            # noqa: E402
+                style = ctypes.windll.user32.GetWindowLongW(int(top.frame(), 16), -16)
+            except Exception:  # noqa: BLE001
+                style = 0
         off = (top.winfo_rootx() + top.winfo_reqwidth() // 2
                - (root.winfo_rootx() + root.winfo_width() // 2),
                top.winfo_rooty() + top.winfo_reqheight() // 2
                - (root.winfo_rooty() + root.winfo_height() // 2))
-        out = {"texts": texts, "buttons": buttons, "off": off,
+        out = {"texts": texts, "buttons": buttons, "off": off, "style": hex(style),
+               "has_close": bool(style & 0x00080000),
+               "has_caption": bool(style & 0x00C00000),
                "req": (top.winfo_reqwidth(), top.winfo_reqheight())}
         top.destroy()
         return out
@@ -249,6 +258,33 @@ def main():
     off = got.get("off") or (999, 999)
     check("弹窗居于设置窗口正中（客户区中心对齐，误差 ≤2px）",
           abs(off[0]) <= 2 and abs(off[1]) <= 2, f"偏移 Δx={off[0]} Δy={off[1]}")
+    check("已去掉标题栏的关闭按钮（WS_SYSMENU 被清）", not got.get("has_close"),
+          f"样式 {got.get('style')}")
+    check("标题栏本身还在（WS_CAPTION 保留 → 布局不变）", bool(got.get("has_caption")),
+          f"样式 {got.get('style')}")
+
+    def probe_normal_dialog():
+        """默认参数（closable=True）的弹窗应当仍有正常的关闭按钮。"""
+        root = settings.root
+        top, _r, _c = dialogs._build(
+            root, "删除模型", "要删吗？",
+            [{"text": "取消", "value": "cancel", "kind": "secondary"},
+             {"text": "删除", "value": "ok", "kind": "danger"}], "err", "ok")
+        top.update_idletasks()
+        top.update()
+        style = 0
+        if os.name == "nt":
+            try:
+                import ctypes                            # noqa: E402
+                style = ctypes.windll.user32.GetWindowLongW(int(top.frame(), 16), -16)
+            except Exception:  # noqa: BLE001
+                style = 0
+        top.destroy()
+        return bool(style & 0x00080000)
+
+    check("其他确认框（默认参数）仍带关闭按钮，没被一起改掉",
+          bool(settings.run_in_ui(probe_normal_dialog, timeout=10)),
+          "closable 默认 True")
 
     settings.shutdown()
     time.sleep(0.5)

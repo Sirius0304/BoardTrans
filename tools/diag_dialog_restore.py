@@ -33,14 +33,23 @@ def show():
         root, "恢复默认设置", "",
         [{"text": "取消", "value": "cancel", "kind": "secondary"},
          {"text": "恢复默认", "value": "ok", "kind": "primary"}],
-        "warn", "ok")
+        "warn", "ok", closable=False)
     dialogs._center_on_parent(top, root)
     top.update_idletasks()
     top.update()
     time.sleep(0.4)
     top.update()
     BOX["top"] = top
-    BOX["grab"] = top.grab_current() is not None
+    # 复核窗口样式：WS_SYSMENU 位应当已被清掉（= 关闭按钮消失）
+    try:
+        import ctypes                                    # noqa: E402
+        hwnd = int(top.frame(), 16)
+        style = ctypes.windll.user32.GetWindowLongW(hwnd, -16)
+        BOX["style"] = hex(style)
+        BOX["sysmenu"] = bool(style & 0x00080000)
+        BOX["caption"] = bool(style & 0x00C00000)
+    except Exception as exc:  # noqa: BLE001
+        BOX["style"] = f"读取失败: {exc}"
     BOX["geo"] = (top.winfo_rootx(), top.winfo_rooty(),
                   top.winfo_reqwidth(), top.winfo_reqheight())
     BOX["parent"] = (root.winfo_rootx(), root.winfo_rooty(),
@@ -82,7 +91,8 @@ print(f"弹窗    : {ww}×{wh} @({wx},{wy})   中心=({dx},{dy})")
 print(f"偏移    : Δx={dx - cx:+d}  Δy={dy - cy:+d}  （居中时都应为 0，误差 ≤1 属取整）")
 print("弹窗里的文字控件:", BOX["texts"])
 print("按钮:", BOX["buttons"])
-print("transient 父窗口:", BOX["transient"])
+print("窗口样式:", BOX.get("style"), " WS_SYSMENU(关闭按钮)=", BOX.get("sysmenu"),
+      " WS_CAPTION(标题栏)=", BOX.get("caption"))
 
 full = ImageGrab.grab(bbox=(px - 20, py - 20, px + pw + 20, py + ph + 20))
 os.makedirs(r"F:\shunyi\docs\_diag", exist_ok=True)
