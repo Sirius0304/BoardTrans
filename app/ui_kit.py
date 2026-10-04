@@ -155,6 +155,7 @@ def S(px: float) -> int:
     """把设计稿上的像素值换算成当前 DPI 下的整数像素（保证锐利、不半像素）。"""
     return max(1, int(round(px * _SCALE)))
 
+
 # 语义色 → （底色, 描边, 文字色）
 TONES = {
     "info": (COLOR_PRIMARY_SOFT, COLOR_PRIMARY_SOFT_BORDER, COLOR_PRIMARY_TEXT),
@@ -989,7 +990,8 @@ class _CanvasBox(tk.Frame):
     """
 
     def __init__(self, parent, fill, border="", radius=RADIUS_CTRL, pad=8,
-                 page_bg=COLOR_PAGE, shadow=False, fit_width=False):
+                 page_bg=COLOR_PAGE, shadow=False, fit_width=False,
+                 pad_x=None):
         super().__init__(parent, bg=page_bg)
         self._fill = fill
         self._border = border
@@ -1005,7 +1007,19 @@ class _CanvasBox(tk.Frame):
                                 width=(10 if fit_width else 1), height=40)
         self.canvas.pack(fill="both", expand=True)
         self.inner = tk.Frame(self.canvas, bg=fill)
-        self._win = self.canvas.create_window(pad, pad, window=self.inner, anchor="nw")
+        # pad_x：内容层**横向**内缩，跟纵向的 pad 分开控制。
+        # 为什么需要（2026-10-04 修"胶囊外边框被内部元素盖住"）：
+        # 内容 Frame 是**实心矩形**，radius 很大时（胶囊 radius=999 → 实际半圆端
+        # r≈14）它的**角会伸进圆角区域**，把圆角描边盖成同色底色 ——
+        # 像素级实测 98×29 的胶囊圆弧区有 28~44 个描边像素被涂掉，
+        # 视觉上就是"外边框在两端断掉、不清晰"。
+        # 注意不能用"浮层/置顶"解决：Tk 里 canvas 的 item **压不住**
+        # window item 里的真实控件（tag_raise 也无效，已实测）；
+        # transparentcolor 在本机 Tk 8.6.15 上也不支持。
+        # 几何上让横向内缩大于"角点落进圆内"的临界值即可：pad_x > r(1-1/√2) ≈ 0.293r。
+        self._pad_x = S(pad_x) if pad_x is not None else self._pad
+        self._win = self.canvas.create_window(self._pad_x, self._pad,
+                                              window=self.inner, anchor="nw")
         self._shapes: list = []
         self._last_key = None          # 上次绘制时的（高, 宽, 底色, 描边）指纹
         self._stable_checks = 0        # 连续多少次自检没有变化（用于退避）
@@ -1035,7 +1049,7 @@ class _CanvasBox(tk.Frame):
 
     # ---- 几何
     def _on_configure(self, event) -> None:
-        self.canvas.itemconfigure(self._win, width=max(1, event.width - 2 * self._pad))
+        self.canvas.itemconfigure(self._win, width=max(1, event.width - 2 * self._pad_x))
         self._redraw(event.width, event.height)
 
     def _fit_height(self) -> None:
@@ -1043,22 +1057,65 @@ class _CanvasBox(tk.Frame):
         if want < 1:
             return
         width = self.canvas.winfo_width() or self.canvas.winfo_reqwidth()
-        key = (want, width, self._fill, self._border, self._radius)
+        # 去重键必须包含**内容请求宽度**（2026-10-04 修"胶囊文字截断"）：
+        # fit_width 组件的宽度由内容决定，但键里只有"高度 + canvas 实际宽 + 配色"，
+        # 于是"文字变长、高度和配色都没变"时（下载进度、正在解压…）键不变 → 早退，
+        # canvas 请求宽度永不更新，胶囊死在旧宽度上，长出来的文字被 canvas 裁掉。
+        # （浮动提醒框当年靠调用 force_redraw() 绕过了这坑，胶囊没调，就中招了。）
+        if self._fit_width:
+            key = (want, width, self.inner.winfo_reqwidth(),
+                   self._fill, self._border, self._radius)
+        else:
+            key = (want, width, self._fill, self._border, self._radius)
         if key == self._last_key:
             return                  # 尺寸/配色都没变 → 不重画（省 CPU，避免闪烁）
         self._last_key = key
         if self.canvas.winfo_reqheight() != want:
             self.canvas.configure(height=want)
         if self._fit_width:
-            want_w = self.inner.winfo_reqwidth() + 2 * self._pad
+            want_w = self.inner.winfo_reqwidth() + 2 * self._pad_x
             if want_w > 1 and self.canvas.winfo_reqwidth() != want_w:
                 self.canvas.configure(width=want_w)
         self._redraw(width, want)
 
     def force_redraw(self) -> None:
-        """内容变化后主动重画一次（例如提示文案变长、状态换色）。"""
+        """内容变化后主动重画一次（例如提示文案变长、状态换色）。
+
+        先跑一轮 idle 任务让内容的新请求尺寸生效（2026-10-04 实测：
+        刚 configure 完立刻问 `winfo_reqwidth` 拿到的还是旧值，Tk 是惰性更新的，
+        直接重算等于没算），再清指纹重算宽高。
+        """
+        try:
+            self.inner.update_idletasks()
+        except Exception:  # noqa: BLE001
+            pass
         self._last_key = None
         self._fit_height()
+
+    def fit_now(self) -> tuple:
+        """在窗口**还没被映射**时算出这个卡片的自然尺寸，返回 (宽, 高)。
+
+        给 `app/dialogs.py` 用：弹窗要"撤隐状态下量准尺寸 → 一次写对位置 → 再露面"，
+        而撤隐时收不到 `<Configure>`，只有 `after(60)` 的自检会算高度。
+
+        **为什么不能问 `self`（外层 Frame）要尺寸**：未映射窗口上 pack 的几何传播
+        不会发生，外层 Frame 与 Canvas 的请求尺寸都停在 1×1（实测）。
+        但**内容层 `self.inner` 的请求尺寸是准的**（它算的是真实内容的 req）。
+        所以这里先让 `_fit_height` 按内容把 Canvas 的请求尺寸算出来，再取它 ——
+        注意 `_fit_height` 写入 canvas 的宽高**已经含 2×内边距**，不要再加一遍。
+
+        返回的是**内容区**（不含卡片相对窗口的外边距）的尺寸，调用方要自己加外边距。
+        """
+        try:
+            self._fit_height()                  # 触发一次内部重算（与 after(60) 自检同一套）
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            # canvas 的请求尺寸已含内边距；inner 的没有，取两者大的那个即可
+            return (max(self.inner.winfo_reqwidth(), self.canvas.winfo_reqwidth()),
+                    max(self.inner.winfo_reqheight(), self.canvas.winfo_reqheight()))
+        except Exception:  # noqa: BLE001
+            return 40, 40
 
     # ---- 外观
     def set_tone(self, fill: str, border: str = "") -> None:
@@ -1114,11 +1171,12 @@ class RoundedPanel(_CanvasBox):
     """
 
     def __init__(self, parent, tone="plain", radius=RADIUS_CTRL, pad=8,
-                 page_bg=COLOR_PAGE, shadow=False, fill=None, border=None, fit_width=False):
+                 page_bg=COLOR_PAGE, shadow=False, fill=None, border=None, fit_width=False,
+                 pad_x=None):
         t_fill, t_border, _fg = TONES.get(tone, TONES["plain"])
         super().__init__(parent, fill=fill or t_fill, border=border if border is not None else t_border,
                          radius=radius, pad=pad, page_bg=page_bg, shadow=shadow,
-                         fit_width=fit_width)
+                         fit_width=fit_width, pad_x=pad_x)
         self.tone = tone
 
     def apply_tone(self, tone: str) -> None:

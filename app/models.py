@@ -21,6 +21,7 @@ Helsinki-NLP 有更大的 opus-mt-tc-big-zh-ja 模型（约 400 MB），
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import shutil
@@ -101,6 +102,106 @@ STALL_TIMEOUT = 20                           # 单片单次读取的最长等待
 #           动态领取：总耗时  6.7 s，尾巴 95→100% 3.9 s（缩短 47%）
 #       真实链路复验 zh_en（71 MB，16 线程 / 49 片）：
 #           44.7 s 完成，平均 1.59 MB/s，尾巴 95→100% 5.0 s，sha256 与原缓存一致。
+
+
+# ---------------------------------------------------------------------------
+# 进度上报
+# ---------------------------------------------------------------------------
+# 进度有两个阶段，必须显式区分（2026-10-03 修复"进度跳回 0%"）：
+#   PHASE_DOWNLOAD 正在收字节，此时 done/total 才有意义
+#   PHASE_EXTRACT  字节已收齐，正在解压安装 —— 此时**绝不能再当百分比显示**
+# 为什么以前会跳回 0%：install() 复用同一个回调发 progress_cb("正在解压", 0, 0)，
+# 而界面按 total 为 0 时把百分比算成 0，于是 100% → 0% → "已下载"，
+# 用户看到的就是"进度瞬间归零又跳走"。把阶段显式带上，这个歧义就没有了。
+PHASE_DOWNLOAD = "download"
+PHASE_EXTRACT = "extract"
+
+
+def _adapt_progress(cb):
+    """把外部进度回调适配成统一签名 (label, done, total, phase)。
+
+    只接受 3 个参数的旧回调（app/console.py 的 progress_line、各测试里的
+    lambda *a）要继续能用，所以这里只在包装时探测一次签名，之后按原样转发。
+    传入的已经是 _Progress 实例时原样返回（ensure→download→install 共用同一个）。
+    """
+    if cb is None or isinstance(cb, _Progress):
+        return None if cb is None else cb._notify
+    try:
+        params = inspect.signature(cb).parameters.values()
+        has_var = any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in params)
+        positional = [p for p in params
+                      if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    except (TypeError, ValueError):          # 内建/无签名对象：按"接受全部"处理
+        return cb
+    if has_var or len(positional) >= 4:
+        return cb
+    return lambda label, done, total, phase=PHASE_DOWNLOAD: cb(label, done, total)
+
+
+class _Progress:
+    """单个文件的进度上报器：单调不回退，且收尾一定补到 100%。
+
+    为什么需要它：
+      1) 底层为省开销按 0.2s 节流上报，最后一个数据块常常来不及上报，
+         界面会停在 98% 就直接跳成"已下载"，中间看不到 100%；
+      2) 分块下载里单片重试会把已计入的字节退回去，百分比会掉下去。
+    单调性只在**单个文件内**保证；跨重试/换源的整段重来由界面层的水位线兜底
+    （见 settings_window._on_download_progress），否则真正的重试会被误当成回退。
+    """
+
+    def __init__(self, cb):
+        # 传入的已经是 _Progress（ensure 把它传给了 download / install）时，
+        # **继承它的字节数与单调水位**，而不是只借用回调。
+        # 否则 install() 拿到的 done/total 会退化成 0/0 —— 这正是真实下载实测
+        # 抓到的那个坑：解压事件仍是 (0, 0)，只是被界面层的阶段标记挡住了而已，
+        # 底层数据本身是错的，换个调用方就会暴露。
+        inherited = cb if isinstance(cb, _Progress) else None
+        cb = inherited._notify if inherited else cb
+        self._cb = _adapt_progress(cb)
+        self._notify = self._cb
+        self._lock = threading.Lock()
+        self._high = inherited._high if inherited else 0
+        self._done = inherited._done if inherited else 0
+        self._total = inherited._total if inherited else 0
+        self._closed = inherited._closed if inherited else False
+
+    def download(self, label: str, done: int, total) -> None:
+        """上报下载阶段进度（内部按百分比单调化）。"""
+        cb = self._cb
+        if cb is None:
+            return
+        with self._lock:
+            if self._closed:
+                return
+            if total:
+                self._total = total
+            self._done = max(done, self._done)
+            if self._total:
+                pct = int(self._done * 100 / self._total)
+                if pct > self._high:
+                    self._high = pct
+            pct = self._high if self._total else 0
+        cb(label, self._done, self._total, PHASE_DOWNLOAD)
+
+    def finish(self, label: str) -> None:
+        """下载收尾：保证最后一定是 100%（哪怕最后一个数据块被节流丢掉了）。"""
+        cb = self._cb
+        if cb is None:
+            return
+        with self._lock:
+            self._closed = True
+            self._high = 100
+            self._done = self._total
+        cb(label, self._done, self._total, PHASE_DOWNLOAD)
+
+    def extract(self, label: str = "正在解压") -> None:
+        """进入解压阶段：沿用已下载字节数，阶段标记为 extract。"""
+        cb = self._cb
+        if cb is None:
+            return
+        with self._lock:
+            done, total = self._done, self._total
+        cb(label, done, total, PHASE_EXTRACT)
 
 
 class DownloadCancelled(Exception):
@@ -242,7 +343,7 @@ def _probe(url: str, timeout: int = 30):
         return None, False
 
 
-def _ranged_download(url: str, dest: str, total: int, progress_cb, label: str,
+def _ranged_download(url: str, dest: str, total: int, prog: _Progress, label: str,
                      timeout: int, cancel_event, threads: int = DEFAULT_THREADS) -> int:
     """多线程分块下载整个文件（不续传，取消时删除半成品）。
 
@@ -315,9 +416,9 @@ def _ranged_download(url: str, dest: str, total: int, progress_cb, label: str,
                 with lock:
                     done[0] += len(chunk)
                     now = time.time()
-                    if progress_cb and now - last_report[0] > 0.2:
+                    if now - last_report[0] > 0.2:
                         last_report[0] = now
-                        progress_cb(label, done[0], total)
+                        prog.download(label, done[0], total)
 
     def worker():
         try:
@@ -378,10 +479,12 @@ def _ranged_download(url: str, dest: str, total: int, progress_cb, label: str,
             except OSError:
                 pass
         raise IOError(f"分块下载失败：{errors[0]}")
+    # 收尾：最后一个数据块可能被 0.2s 节流丢掉，这里保证一定报到 100%
+    prog.finish(label)
     return total
 
 
-def _single_thread_download(url: str, dest: str, progress_cb, label: str,
+def _single_thread_download(url: str, dest: str, prog: _Progress, label: str,
                             timeout: int, cancel_event) -> int:
     """单线程下载（支持断点续传），作为多线程不可用时的回退路径。"""
     expect = None
@@ -413,11 +516,12 @@ def _single_thread_download(url: str, dest: str, progress_cb, label: str,
                 f.flush()          # 及时落盘：取消或意外中断时已下载部分不丢，下次可续传
                 got += len(chunk)
                 now = time.time()
-                if progress_cb and now - last_report > 0.2:
+                if now - last_report > 0.2:
                     last_report = now
-                    progress_cb(label, got, expect)
+                    prog.download(label, got, expect)
     if expect and got < expect:
         raise IOError(f"下载不完整: {got}/{expect}")
+    prog.finish(label)
     return got
 
 
@@ -431,6 +535,9 @@ def _open_with_progress(url: str, dest: str, progress_cb, label: str, timeout: i
     if _is_cancelled(cancel_event):
         raise DownloadCancelled("已取消下载")
 
+    # 复用 ensure() 传下来的同一个 _Progress（保留已下载字节数与单调水位）；
+    # 独立调用本函数时（测试、脚本）才在这里新建一个
+    prog = progress_cb if isinstance(progress_cb, _Progress) else _Progress(progress_cb)
     total, supports_range = _probe(url, timeout=min(timeout, 30))
     use_multi = bool(supports_range and total and total >= MULTITHREAD_MIN_SIZE)
 
@@ -438,7 +545,7 @@ def _open_with_progress(url: str, dest: str, progress_cb, label: str, timeout: i
         # 根据大小决定线程数：每块至少 4 MB，避免小文件开一堆线程
         threads = max(2, min(DEFAULT_THREADS, total // (4 * 1024 * 1024)))
         try:
-            return _ranged_download(url, dest, total, progress_cb, label,
+            return _ranged_download(url, dest, total, prog, label,
                                     timeout, cancel_event, threads=threads)
         except DownloadCancelled:
             raise
@@ -446,7 +553,11 @@ def _open_with_progress(url: str, dest: str, progress_cb, label: str, timeout: i
             # 分块下载失败（网络抖动 / 服务器中途拒绝 Range 等）→ 退回单线程
             log.warning("分块下载失败，改为单线程重试：%s", exc)
 
-    return _single_thread_download(url, dest, progress_cb, label, timeout, cancel_event)
+    # 关键点（2026-10-03）：分块失败退回单线程时，单线程是从 0 重新开始的
+    # （半成品已被删除）。如果这里新建一个 _Progress，进度就会从 100% 跳回 0%，
+    # 正是主人报的那个现象。所以复用同一个 prog —— 它的百分比单调不回退，
+    # 单线程的字节数虽然从头计，显示的百分比仍只会往上走。
+    return _single_thread_download(url, dest, prog, label, timeout, cancel_event)
 
 
 def download(key: str, progress_cb=None, retries: int = 3, cancel_event=None) -> str:
@@ -467,7 +578,14 @@ def _download_locked(key: str, progress_cb=None, retries: int = 3, cancel_event=
         dest = os.path.join(cache, f"{key}.argosmodel")
         if os.path.exists(dest) and os.path.getsize(dest) >= info["size"] * 0.98:
             if progress_cb:
-                progress_cb(info["display"], info["size"], info["size"])
+                # 包已存在（换源失败后重试、或上次下完没装完）：直接报到 100%。
+                # 这里必须显式给 100%，否则界面会停在旧进度上直到"已下载"才跳。
+                # 用新的 _Progress（走裸回调）：本段是独立事件，
+                # 不能沿用外层那个可能已收尾(closed)的实例，否则会被静默吞掉。
+                done_cb = progress_cb._notify if isinstance(progress_cb, _Progress) else progress_cb
+                prog = _Progress(done_cb)
+                prog.download(info["display"], info["size"], info["size"])
+                prog.finish(info["display"])
             return dest
         urls = [info["url"]] + list(info.get("fallback_urls") or [])
         last_error = None
@@ -495,7 +613,11 @@ def _download_locked(key: str, progress_cb=None, retries: int = 3, cancel_event=
         dest = os.path.join(target, name)
         if os.path.exists(dest) and os.path.getsize(dest) > 0:
             if progress_cb:
-                progress_cb(f"{info['display']} / {name}", 1, 1)
+                # 同上：已存在的文件按"这个文件已完成"上报，避免进度看起来没动
+                done_cb = progress_cb._notify if isinstance(progress_cb, _Progress) else progress_cb
+                prog = _Progress(done_cb)
+                prog.download(f"{info['display']} / {name}", 1, 1)
+                prog.finish(f"{info['display']} / {name}")
             continue
         last_error = None
         ok = False
@@ -538,7 +660,14 @@ def install(key: str, progress_cb=None) -> str:
         raise FileNotFoundError(f"找不到模型包: {archive}")
 
     if progress_cb:
-        progress_cb("正在解压", 0, 0)
+        # 关键（2026-10-03 修"进度跳回 0%"）：这里以前发的是 progress_cb("正在解压", 0, 0)，
+        # 界面按"done/total"算百分比，total=0 就被算成 0% —— 于是下载刚到 100%，
+        # 紧接着被这条消息打成 0%，解压完再跳成"已下载"，用户看到的就是
+        # "进度瞬间归零又跳走"。现在带 extract 阶段标记、沿用真实已下载字节数，
+        # 界面只显示"正在解压…"而不再重置百分比。
+        # ensure() 传下来的是同一个 _Progress（带着真实的 done/total），直接复用。
+        prog = progress_cb if isinstance(progress_cb, _Progress) else _Progress(progress_cb)
+        prog.extract("正在解压")
     tmp = target + ".installing"
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp, exist_ok=True)
@@ -561,12 +690,18 @@ def ensure(key: str, progress_cb=None, cancel_event=None) -> str:
 
     整段（判断 -> 下载 -> 安装）都在同一把锁里完成，
     避免两个线程同时进入后各写一份文件。
+
+    关键（2026-10-03）：这里创建**唯一**一个 _Progress 实例，下载与解压共用它。
+    以前 install() 拿到的是裸回调，只能凭空发一条 (0, 0) 的"正在解压"，
+    界面按 total=0 算百分比就成了 0% —— 这正是"进度跳回 0%"的根因。
+    共用一个实例后，解压阶段能沿用真实的已下载字节数，且阶段是显式的。
     """
     with _model_download_lock(key):
         if is_installed(key):
             return model_dir(key)
-        download(key, progress_cb=progress_cb, cancel_event=cancel_event)
-        return install(key, progress_cb=progress_cb)
+        prog = _Progress(progress_cb)
+        download(key, progress_cb=prog, cancel_event=cancel_event)
+        return install(key, progress_cb=prog)
 
 
 def _looks_like_model_package(filename: str, key: str) -> bool:

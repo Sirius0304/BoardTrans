@@ -39,6 +39,9 @@ def main():
 
         def build():
             top, result, close = dialogs._build(settings.root, title, message, buttons, tone, "ok")
+            # 弹窗创建时是全透明的（避免先在左上角闪一下），定位收敛后才现身。
+            # 这里绕过了 dialogs._run，所以要自己居中，否则截到的是一张全透明图。
+            dialogs._center_on_parent(top, settings.root)
 
             def after_layout():
                 holder["bbox"] = (top.winfo_rootx(), top.winfo_rooty(),

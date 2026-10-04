@@ -9,7 +9,7 @@
 用法（必须在**创建窗口的那个线程**里调用，tkinter 非线程安全）：
     from app import dialogs
     ok = dialogs.ask(self.root, "删除模型", "...", tone="err", ok_text="删除")
-    dialogs.tell(self.root, "删除完成", "...", tone="ok")
+    dialogs.tell(self.root, "正在下载中", "...", tone="info")
 
 其它线程（例如托盘线程）要弹框，请走 SettingsWindow.run_in_ui() 回到窗口线程。
 """
@@ -25,6 +25,9 @@ from . import ui_kit as ui
 # 说明文字折行宽度（像素，随 DPI 缩放）
 _TEXT_WRAP = 380
 
+# 卡片相对窗口的外边距（_build 里 card.pack 的 padx/pady），定位时要加回去
+_CARD_PAD = 8
+
 # 窗口样式相关常量（隐藏标题栏关闭按钮时用）
 _GWL_STYLE = -16
 _WS_SYSMENU = 0x00080000
@@ -37,8 +40,10 @@ def _hide_close_button(top: tk.Toplevel) -> None:
     做法：清掉窗口样式里的 `WS_SYSMENU`（系统菜单）—— Windows 会把"×"连同
     标题栏左键菜单一起去掉，标题文字和标题栏本身都还在，所以**布局一点不变**。
 
-    为什么不 `overrideredirect(True)`：那会把整个标题栏干掉，窗口位置/层级/外观
+    为什么不 `overrideredirect(True)`：那会把整个标题栏干掉、窗口位置/层级/外观
     全变，不符合"样式布局不变"。
+
+    必须在窗口**映射之后**调用：撤隐状态下改非客户区样式不保证生效（实测）。
     """
     if os.name != "nt":
         return
@@ -65,50 +70,99 @@ def _accent_color(tone: str) -> str:
     return fg
 
 
-def _center_on_parent(top: tk.Toplevel, master) -> None:
-    """把对话框摆到父窗口正中（父窗口测不到时退回屏幕居中）。
+def _card_of(top):
+    """取出弹窗里的圆角卡片（弹窗的自然尺寸得靠它量）。找不到返回 None。"""
+    try:
+        for child in top.winfo_children():
+            if isinstance(child, ui.RoundedCard):
+                return child
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
-    三个坑（2026-10-01 一次性修掉，之前弹窗会明显偏出中心）：
-      1) 卡片是 Canvas 自绘、高度靠 `<Configure>` 自适应，尺寸要一两轮事件循环才收敛
-         —— 按中间值（实测 26×56）算位置必然歪，所以尺寸没撑开前先不动手；
-      2) `<Configure>` 由窗口管理器**异步**派发，得绑事件等它来，而不是"跑几轮 update"；
-      3) Tk 的 `wm geometry` 位置指的是**窗口框架**（含标题栏/边框）左上角，而
-         `winfo_rootx/rooty` 返回**客户区**坐标，两者差一个边框 —— 实测横向 8px、纵向 31px。
-         关键：这个差值 = `winfo_rootx − winfo_x`，**与窗口当前位置无关**，
-         量一次直接补偿即可（不要拿"目标位置"去反复迭代，那会来回漂移）。
+
+def _center_on_parent(top: tk.Toplevel, master, frameless: bool = False) -> None:
+    """在弹窗**仍处于撤隐状态**时把尺寸和位置一次算准，然后才让它露面。
+
+    完整时序（2026-10-03 修"先在左上角闪一下、再跳到中间"，前后试过两版才根治）：
+
+      1. `_build` 创建后**立刻 `withdraw()`** —— 弹窗整个成型期都不在屏幕上；
+      2. 这里在撤隐状态下量准卡片的自然尺寸（`fit_now()` 直接驱动 `_fit_height`，
+         不用干等 `after(60)` 的定时自检）；
+      3. `geometry("WxH+X+Y")` 把**尺寸和位置一次写对**；
+      4. 最后 `deiconify()` —— 用户看到的第一帧就已经在正中央，全程无闪烁、无位移。
+
+    为什么不能"先显示再挪"（前两版失败的共同原因）：
+      `tk.Toplevel` 一创建就被 Windows 映射在 `+0+0`（屏幕左上角）、尺寸只有 26×56。
+      而窗口合成由 **dwm.exe（独立进程）** 完成 —— 窗口一被显示就可能已经被合成出那一帧，
+      Python 层事后设 `attributes("-alpha", 0)` 来不及（实测设了照样闪）。
+      **只有"从未被映射"才真正不会被画出来。**
+
+    撤隐期能量准尺寸吗？能：卡片高度由 `_CanvasBox._fit_height` 计算，只依赖内容的
+    请求尺寸，与窗口是否映射无关。实测撤隐状态下量到 418×170，加上 2×8 外边距正好
+    434×186，与映射后的真实尺寸一致。
+
+    位置换算要补偿边框：`wm geometry` 用**窗口框架**坐标、`winfo_rootx/rooty` 是
+    **客户区**坐标，两者差一个边框（实测横向 8px、纵向 31px）。撤隐时量不到自己的偏移，
+    就借父窗口的偏移来用（同为标准边框窗口，实测两者一致）。
+    **不要拿"目标位置"去反复迭代，会来回漂移。**
     """
-    state = {"done": False}
-
-    def _place(*_event) -> None:
-        if state["done"]:
-            return
+    try:
+        # 先让内容层的几何传播跑一遍：撤隐状态下 inner 等 Frame 的请求尺寸要等
+        # update_idletasks 之后才是真值（实测不跑就是 1×1）
+        top.update_idletasks()
+        card = _card_of(top)
+        if card is not None:
+            cw, ch = card.fit_now()
+            w, h = cw + _CARD_PAD * 2, ch + _CARD_PAD * 2
+        else:                                   # 兜底：拿不到卡片就用窗口自身请求尺寸
+            w = max(top.winfo_reqwidth(), 40)
+            h = max(top.winfo_reqheight(), 40)
+        # 尺寸不合理（内容还没算出来）就再推一次布局，最多 3 轮
+        tries = 0
+        while (w < 60 or h < 40) and card is not None and tries < 3:
+            top.update_idletasks()
+            cw, ch = card.fit_now()
+            w, h = cw + _CARD_PAD * 2, ch + _CARD_PAD * 2
+            tries += 1
+        if w < 60 or h < 40:                    # 实在量不准也别给一个 1×1 的窗口
+            w, h = 440, 200
         try:
-            w, h = top.winfo_reqwidth(), top.winfo_reqheight()
-            if w < 40 or h < 40:
-                return                          # 卡片还没撑开，等下一轮
+            px, py = master.winfo_rootx(), master.winfo_rooty()
+            pw, ph = master.winfo_width(), master.winfo_height()
+            if pw < 50 or ph < 50:
+                raise ValueError("父窗口尺寸不可用")
+        except Exception:  # noqa: BLE001
+            px = py = 0
+            pw, ph = top.winfo_screenwidth(), top.winfo_screenheight()
+        if not frameless:
+            # 只有**带标题栏**的窗口才需要扣掉边框：`wm geometry` 定位的是窗口框架
+            # 左上角，而我们要对齐的是客户区中心。撤隐时量不到自己的偏移，借父窗口的
+            # （同为标准边框窗口，实测一致）。无边框弹窗框架=客户区，扣了反而偏 8/31px。
             try:
-                px, py = master.winfo_rootx(), master.winfo_rooty()
-                pw, ph = master.winfo_width(), master.winfo_height()
-                if pw < 50 or ph < 50:
-                    raise ValueError("父窗口尺寸不可用")
+                off_x = master.winfo_rootx() - master.winfo_x()
+                off_y = master.winfo_rooty() - master.winfo_y()
             except Exception:  # noqa: BLE001
-                px, py = 0, 0
-                pw, ph = top.winfo_screenwidth(), top.winfo_screenheight()
-            # 想让"客户区中心"落在父窗口中心
-            want_x = max(0, px + (pw - w) // 2)
-            want_y = max(0, py + (ph - h) // 2)
-            off_x = top.winfo_rootx() - top.winfo_x()
-            off_y = top.winfo_rooty() - top.winfo_y()
-            top.geometry(f"+{max(0, want_x - off_x)}+{max(0, want_y - off_y)}")
-            state["done"] = True
+                off_x = off_y = 0
+        else:
+            off_x = off_y = 0
+        want_x = px + (pw - w) // 2 - off_x
+        want_y = py + (ph - h) // 2 - off_y
+        # 尺寸和位置一次写对：之后不再有任何 geometry 调用，避免二次跳动
+        top.geometry(f"{w}x{h}+{max(0, want_x)}+{max(0, want_y)}")
+    except Exception:  # noqa: BLE001
+        try:
+            top.geometry("+0+0")
         except Exception:  # noqa: BLE001
             pass
-
     try:
+        top.deiconify()                        # 唯一一次露面
         top.update_idletasks()
-        _place()
-        top.bind("<Configure>", _place, add="+")
-        top.after(200, _place)          # 兜底：万一 <Configure> 没来（例如尺寸恰好没变）
+        if frameless:
+            # 无边框窗口不会由系统自动给焦点，不给的话 Esc / Enter 都收不到。
+            # deiconify 之后焦点还没落到它身上，所以要显式 lift + focus_force。
+            top.lift()
+            top.focus_force()
     except Exception:  # noqa: BLE001
         pass
 
@@ -117,6 +171,9 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str,
            closable: bool = True, frameless: bool = False):
     """构建对话框并返回 (Toplevel, 结果字典, 关闭函数)。
 
+    注意：返回时窗口仍是**撤隐**状态、且已经定好尺寸与位置，调用方必须接着调
+    `_center_on_parent()` 才会真正露面（`_run` 已经这么做了）。
+
     closable=False：去掉标题栏右上角的关闭按钮（标题栏仍在）。
     frameless=True：**连整个标题栏都不要**（`overrideredirect`），弹窗就是那张圆角卡片
                     —— 用于"一句话 + 两个按钮"的极简确认框（2026-10-01 按参考样式）。
@@ -124,11 +181,20 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str,
     """
     top = tk.Toplevel(master)
     top.title(title)
+    # 关键（2026-10-03）：**创建后立刻撤隐**，弹窗的整个"成型期"都不在屏幕上。
+    #
+    # 为什么非撤隐不可：`tk.Toplevel` 一创建就被 Windows 映射在 `+0+0`（屏幕左上角）、
+    # 尺寸只有 26×56，等卡片撑开、位置算准才挪到中间 —— 中间那一帧会被用户看到。
+    # 第一版想用 `attributes("-alpha", 0.0)` 挡，**实测无效**：窗口合成在 dwm.exe 里进行，
+    # 是独立进程，窗口一被显示就可能已经合成出那一帧，Python 层事后设 alpha 来不及。
+    # 只有"从未被映射"才真正不会被画出来。
+    try:
+        top.withdraw()
+    except Exception:  # noqa: BLE001
+        pass
     if frameless:
         try:
-            # Toplevel 一创建就已经映射了，此时再改边框样式**不生效**（窗口会照旧带标题栏，
-            # 或者干脆不显示）—— 先撤回、改完样式、等内容建好再 deiconify。
-            top.withdraw()
+            # overrideredirect 必须在窗口**映射之前**设置，否则不生效。
             top.overrideredirect(True)
         except Exception:  # noqa: BLE001
             pass
@@ -152,7 +218,7 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str,
     # 白卡片：与设置窗口里的卡片完全同一套（圆角、1px 描边、轻阴影、内边距随 DPI）。
     # fit_width=True：对话框没有父窗口撑宽，卡片必须按内容自己请求宽度
     card = ui.RoundedCard(top, pad=ui.S(16), shadow=True, fit_width=True)
-    card.pack(fill="both", expand=True, padx=ui.S(8), pady=ui.S(8))
+    card.pack(fill="both", expand=True, padx=ui.S(_CARD_PAD), pady=ui.S(_CARD_PAD))
     body = card.body
 
     # 左侧语义色强调条 + 右侧文字（配色取自 TONES，与界面提示框一致）
@@ -191,16 +257,6 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str,
     top.bind("<Escape>", lambda _e: _close("cancel"))
     top.bind("<Return>", lambda _e: _close(default))
     top.protocol("WM_DELETE_WINDOW", lambda: _close("cancel"))
-    if frameless:
-        try:
-            top.deiconify()              # 无边框样式已设好，现在才让它露面
-            top.lift()
-            # 无边框窗口不会由系统自动给焦点，不给的话 Esc / Enter 都收不到
-            top.focus_force()
-        except Exception:  # noqa: BLE001
-            pass
-    elif not closable:
-        _hide_close_button(top)          # 无边框时本就没有关闭按钮，无需处理
     return top, result, _close
 
 
@@ -208,11 +264,14 @@ def _run(master, title, message, buttons, tone, default,
          closable: bool = True, frameless: bool = False) -> str:
     top, result, _close = _build(master, title, message, buttons, tone, default,
                                  closable, frameless)
+    # 顺序要紧：先定好尺寸位置并露面，再抓模态 —— 撤隐的窗口 grab 不生效
+    _center_on_parent(top, master, frameless)
+    if not frameless and not closable:
+        _hide_close_button(top)      # 映射之后再清 WS_SYSMENU（撤隐时改样式不保证生效）
     try:
-        top.grab_set()                 # 模态：必须先处理这个框
+        top.grab_set()               # 模态：必须先处理这个框
     except Exception:  # noqa: BLE001
         pass
-    _center_on_parent(top, master)
     try:
         top.wait_window(top)
     except Exception:  # noqa: BLE001

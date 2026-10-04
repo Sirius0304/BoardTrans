@@ -239,6 +239,8 @@ class SettingsWindow:
         # 每个模型最近一次进度采样 {t, done, text}，用来算瞬时速度与剩余时间
         self._dl_samples: dict[str, dict] = {}
         self._model_status: dict[str, dict] = {}
+        # 每个模型本次下载到过的最高百分比（单调水位线，2026-10-03 新增）
+        self._dl_high: dict[str, int] = {}
         self._last_config_snapshot: tuple | None = None
 
     # ---------------------------------------------------------- 对外接口
@@ -676,17 +678,34 @@ class SettingsWindow:
 
     def _status_chip(self, parent, text: str = "") -> ui.RoundedPanel:
         """模型状态胶囊：对外保留 label 的 cget/configure（业务与回归测试都用 text/fg）。"""
-        chip = ui.RoundedPanel(parent, tone="plain", radius=999, pad=2, page_bg=COLOR_CARD,
-                               fit_width=True)
+        # pad_x=12：胶囊 radius=999（实际半圆端 r≈14），内容 Frame 是**实心矩形**，
+        # 它的**角会伸进圆角区**，把圆角描边盖成同色底色 —— 像素级实测
+        # 98×29 的胶囊圆弧区有 28~44 个描边像素被涂掉，视觉上就是
+        # "外边框在两端断掉、不清晰"。
+        # 为什么不能用"置顶 / 浮层"解决（两条都试过、不行，勿再走弯路）：
+        #   ① Tk 里 canvas 的 item 压不住 window item 里的真实控件，tag_raise 也无效；
+        #   ② transparentcolor 浮层在本机 Tk 8.6.15 上不支持（unknown option）。
+        # 几何临界值 r(1-1/√2) ≈ 0.293r ≈ 4.1，但那是"角点恰好落在圆上"，
+        # 实测要pad_x=12 才让**三种状态的圆弧描边全部完整**（info/ok 异常归零），
+        # 文字顶端的抗锯齿笔画也不会碰到上边描边。
+        # 视觉零代价：纵向 pad 仍为 2（高度不变 29px），label 的 padx 由 8 收到 1，
+        # 净内边距 pad_x(12)+padx(1) 与改前 pad(2)+padx(8) 一致；
+        # 仅整体宽度 +4px（圆角需要横向空间，换来描边完整）。
+        chip = ui.RoundedPanel(parent, tone="plain", radius=999, pad=2, pad_x=12,
+                               page_bg=COLOR_CARD, fit_width=True)
         chip.label = ui.TextLabel(chip.inner, text=text, bg=ui.COLOR_HOVER, fg=COLOR_SUBTEXT,
                               font="ShunYiSmall", anchor="w")
-        chip.label.pack(padx=8, pady=1)
+        chip.label.pack(padx=1, pady=1)
 
         def _configure(cnf=None, **kw):
             fg = kw.pop("fg", None)
             text_val = kw.pop("text", None)
             if text_val is not None:
                 chip.label.configure(text=text_val)
+                # 文字变了要立即重算胶囊宽度（2026-10-04 修"正在解压等长文案被截断"）：
+                # 不调的话要等 _watch 下一轮自检（稳定后退避到 1 秒一次），
+                # 下载进度 0.2 秒一帧的节奏下界面会长时间停在被裁掉的旧宽度上。
+                chip.force_redraw()
             if fg is not None:
                 chip.label.configure(fg=fg)
                 tone = "err" if fg in (COLOR_ERR, ui.COLOR_ERR_TEXT) else (
@@ -782,8 +801,6 @@ class SettingsWindow:
             action = self._action_button(row)
             action.pack(side="right", padx=(10, 0))
 
-            progress = ttk.Progressbar(card, mode="determinate", maximum=100,
-                                       style="Thin.Horizontal.TProgressbar")
             note = ui.TextLabel(card, text=info["note"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                             font="ShunYiSmall", anchor="w", justify="left", wraplength=ui.S(440))
             note.pack(fill="x", pady=(0, 10))
@@ -791,7 +808,6 @@ class SettingsWindow:
             self._model_ui[key] = {
                 "status": status,
                 "action": action,
-                "progress": progress,
                 "note": note,
                 "row": row,
             }
@@ -1334,7 +1350,6 @@ class SettingsWindow:
                 ui["action"].configure(text="重试删除",
                                        command=lambda k=key: self._on_delete_model(k))
                 ui["action"].state(["!disabled"])
-                ui["progress"].pack_forget()
                 continue
 
             # 上次下载失败：常驻显示原因，并给出"重试下载"（关闭通知时这是唯一提示）
@@ -1345,7 +1360,6 @@ class SettingsWindow:
                 ui["action"].configure(text="重试下载",
                                        command=lambda k=key: self._on_download_model(k))
                 ui["action"].state(["!disabled"])
-                ui["progress"].pack_forget()
                 continue
 
             installed = models.is_installed(key)
@@ -1372,7 +1386,6 @@ class SettingsWindow:
                                    command=(lambda k=key: self._on_delete_model(k)) if can_delete
                                    else (lambda k=key: self._on_download_model(k)))
             ui["action"].state(["!disabled"])
-            ui["progress"].pack_forget()
 
     def _on_download_model(self, key: str) -> None:
         # 本次要下载哪些模型：中译日还需要中译英作为基础模型。
@@ -1406,27 +1419,16 @@ class SettingsWindow:
         if self._download_threads.get(key) and self._download_threads[key].is_alive():
             return
 
-        info = next(i for i in MODEL_CARDS if i["key"] == key)
-        size_text = info["size_text"]
-        tip = (f"即将下载：{info['title']}（{size_text}）。\n\n"
-               "这是本软件唯一需要联网的操作，翻译过程本身完全离线。\n"
-               "下载会自动开启并发加速（多连接同时下），速度比单连接快很多。\n"
-               "中途可以随时点「取消」；取消后再点下载会重新开始（因为并发下载"
-               "无法从断点接续，不过加速后整体耗时已经短很多）。")
-        if need_base:
-            tip += "\n\n注意：日文方向还需要「中译英」基础模型（约 71 MB），本次会一并下载。"
-        if not dialogs.ask(self.root, "开始下载模型", tip, ok_text="开始下载"):
-            return
-
         cancel = threading.Event()
         self._cancel_events[key] = cancel
         self._active_downloads.update(targets)      # 登记占用，避免其他入口重复发起
         self._model_status[key] = {"status": "downloading", "percent": 0, "error": ""}
+        # 每次发起下载都重置水位线，否则上一次下到 100% 会让这次的进度一直卡在 100%
+        for k in targets:
+            self._dl_high[k] = 0
         ui = self._model_ui[key]
         ui["status"].configure(text="状态：正在下载 0%", fg=COLOR_PRIMARY)
         ui["action"].configure(text="取消", command=lambda k=key: self._cancel_download(k))
-        ui["progress"].pack(fill="x", pady=(2, 8))
-        ui["progress"]["value"] = 0
 
         def worker():
             try:
@@ -1447,6 +1449,9 @@ class SettingsWindow:
                 # 无论成功、取消还是失败，都要释放占用登记
                 for k in targets:
                     self._active_downloads.discard(k)
+                    # 依赖项（比如中译日带的中译英）没有自己的 download_done 消息，
+                    # 它的水位线没人清 —— 不清的话下次单独下载该模型会被上次的水位卡住
+                    self._dl_high.pop(k, None)
 
         thread = threading.Thread(target=worker, name=f"shunyi-dl-{key}", daemon=True)
         self._download_threads[key] = thread
@@ -1470,8 +1475,8 @@ class SettingsWindow:
             fg=COLOR_PRIMARY)
 
     def _download_one(self, key: str, cancel: threading.Event) -> None:
-        def progress(label, done, total):
-            self._queue.put(("progress", (key, done, total, label)))
+        def progress(label, done, total, phase=models.PHASE_DOWNLOAD):
+            self._queue.put(("progress", (key, done, total, label, phase)))
         models.ensure(key, progress_cb=progress, cancel_event=cancel)
 
     def _download_rate_text(self, key: str, done: int, total: int) -> str:
@@ -1504,25 +1509,46 @@ class SettingsWindow:
         self._dl_samples[key] = st
         return st["text"]
 
-    def _on_download_progress(self, key: str, done: int, total: int, label: str = "") -> None:
+    def _on_download_progress(self, key: str, done: int, total: int, label: str = "",
+                               phase: str = models.PHASE_DOWNLOAD) -> None:
         ui = self._model_ui.get(key)
         if not ui:
             return
-        # 防御性处理：无论从哪条路径进来，都确保进度条是显示状态
-        if not ui["progress"].winfo_manager():
-            ui["progress"].pack(fill="x", pady=(2, 8))
-        percent = int(done * 100 / total) if total else 0
-        # total 可能为 None（服务器没给 Content-Length），此时只显示已下载量
+
+        # ---- 解压阶段：只换文案，绝不重置百分比（2026-10-03 修"进度跳回 0%"）
+        # 这一支以前是和下载混在一起算的：install() 发的是 (done=0, total=0)，
+        # 落到下面的百分比计算里就成了 0%，于是 100% → 0% → "已下载"。
+        # 现在阶段是显式的，界面看到 extract 就只显示"正在解压…"。
+        if phase == models.PHASE_EXTRACT:
+            ui["status"].configure(
+                text="状态：下载完成，正在解压…", fg=COLOR_PRIMARY)
+            return
+
+        # ---- 下载阶段：单调水位线，任何情况下百分比只增不减
+        # 模型层已经在单个文件内做了单调化，这里再加一道界面层的兜底：
+        # 换源重试 / 分块失败退回单线程时，字节数确实会从头再计一遍，
+        # 但用户看到的是"同一个下载任务"，百分比不该因此倒退。
+        prev = self._dl_high.get(key, 0)
+        raw = int(done * 100 / total) if total else 0
+        percent = max(raw, prev)
+        self._dl_high[key] = percent
+
+        # 字节数也要跟着百分比走，否则会出现"3.6 MB 却显示 69%"这种自相矛盾的画面
+        # （换源重试时字节数从头计，百分比被水位线托住 —— 两个数必须同源）。
+        if total and percent > raw:
+            done = int(total * percent / 100)
+        elif total:
+            done = min(done, int(total * percent / 100) + total // 100)
+
         if total:
             size_text = f"{done/1024/1024:.1f} / {total/1024/1024:.1f} MB"
         else:
+            # total 未知（服务器没给 Content-Length）：只显示已下载量，不显示百分比
             size_text = f"已下载 {done/1024/1024:.1f} MB"
         rate_text = self._download_rate_text(key, done, total)
         self._model_status[key] = {"status": "downloading", "percent": percent, "error": ""}
         ui["status"].configure(
             text=f"状态：正在下载 {percent}%　（{size_text}）{rate_text}", fg=COLOR_PRIMARY)
-        if total:
-            ui["progress"]["value"] = percent
 
     def _on_download_done(self, key: str, ok: bool, message: str) -> None:
         cancelled = "取消" in (message or "")
@@ -1537,6 +1563,7 @@ class SettingsWindow:
         self._model_status[key] = {"status": state, "percent": 0, "error": message}
         self._active_downloads.discard(key)
         self._dl_samples.pop(key, None)      # 清掉速度采样，下次下载重新起算
+        self._dl_high.pop(key, None)         # 清掉单调水位线，下次下载重新从 0% 起算
         # 先刷新界面、再通知：提醒会占用窗口线程，先刷新能保证提醒消失后界面立刻是对的
         self._refresh_models()
         # 注意：这里**不能**清 _dirty。
@@ -1595,55 +1622,26 @@ class SettingsWindow:
                 log.exception("卸载模型失败（继续尝试删除）")
 
             result = models.remove(key)
-            freed = result["freed"]
-            removed_count = len(result["removed"])
             failed = result["failed"]
 
             # 删除后再实地核实一遍，避免"界面显示删了、磁盘上还在"
             leftover = models.leftover_files(key)
 
             if leftover or failed:
-                detail = [f"  · {p}" for p in leftover]
-                detail += [f"  · {p}（{why}）" for p, why in failed]
+                # 结果一律走界面内反馈：卡片会显示「删除未完成（部分文件仍被占用）」
+                # 并给出「重试删除」按钮。
+                # 2026-10-01：原先这里（以及下面的成功/失败分支）都会弹窗告知结果，
+                # 按主人要求**移除删除后的全部弹窗**，改为只靠卡片状态反馈。
                 self._model_status[key] = {"status": "stale", "percent": 0,
                                            "error": "部分文件仍被占用"}
-                dialogs.tell(
-                    self.root, "删除未完成",
-                    f"已清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB。\n\n"
-                    "但以下文件没能删掉：\n" + "\n".join(detail[:8]) +
-                    "\n\n常见原因是文件正被占用。可以退出软件后手动删除，"
-                    "或在设置里再点一次「重试删除」。",
-                    tone="warn")
             else:
                 self._model_status.pop(key, None)
-                missing = models.missing_for_target(cfg.get("target_lang", "en"))
-                if missing:
-                    names = "、".join(next(i["title"] for i in MODEL_CARDS if i["key"] == m)
-                                      for m in missing)
-                    dialogs.tell(
-                        self.root, "已删除，但有影响",
-                        f"删除完成：共清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB。\n\n"
-                        f"当前目标语言所需的「{names}」模型已缺失，"
-                        "现在按快捷键会提示模型未就绪，请重新下载后再使用。",
-                        tone="warn")
-                else:
-                    dialogs.tell(
-                        self.root, "删除完成",
-                        f"删除完成：共清理 {removed_count} 处，释放 {freed/1024/1024:.0f} MB 磁盘空间。",
-                        tone="ok")
         except PermissionError:
             self._model_status[key] = {"status": "stale", "percent": 0, "error": "文件被占用"}
-            dialogs.tell(
-                self.root, "无法删除",
-                "模型文件正在被占用，删除没有执行。\n\n"
-                "请先把目标语言切到另一个方向，或退出软件后手动删除该文件夹，"
-                "然后再回到设置里点一次「重试删除」。",
-                tone="err")
         except Exception as exc:  # noqa: BLE001
             log.exception("删除模型失败")
             self._model_status[key] = {"status": "stale", "percent": 0,
                                        "error": self._friendly_error(exc)[:20]}
-            dialogs.tell(self.root, "删除失败", self._friendly_error(exc), tone="err")
         finally:
             self._refresh_models()
 

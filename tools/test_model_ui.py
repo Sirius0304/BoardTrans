@@ -3,7 +3,7 @@
 模型管理测试：
 1) 下载中「取消」是否立即生效（并保留已下部分便于续传）
 2) 「删除」是否真的释放空间（用临时假模型目录测试，不动真模型）
-3) 界面上的状态文字 / 按钮文字 / 进度条是否随状态正确切换
+3) 界面上的状态文字 / 按钮文字是否随状态正确切换
 """
 import os
 import shutil
@@ -155,21 +155,17 @@ def test_ui_states():
     def grab():
         holder["status"] = {k: v["status"].cget("text") for k, v in settings._model_ui.items()}
         holder["action"] = {k: v["action"].cget("text") for k, v in settings._model_ui.items()}
-        holder["bar_visible"] = bool(settings._model_ui["zh_en"]["progress"].winfo_manager())
 
     settings._queue.put(("call", grab))
     time.sleep(0.8)
     print(f"       已安装状态：{holder['status']}")
     check("已安装显示「已下载」", "已下载" in holder["status"]["zh_en"], holder["status"]["zh_en"])
     check("已安装时按钮为「删除」", holder["action"]["zh_en"] == "删除", holder["action"]["zh_en"])
-    check("平时不显示进度条", holder["bar_visible"] is False)
 
     def fake_progress():
         settings._on_download_progress("zh_en", 30 * 1024 * 1024, 71 * 1024 * 1024, "测试")
         holder["after"] = {
             "status": settings._model_ui["zh_en"]["status"].cget("text"),
-            "value": settings._model_ui["zh_en"]["progress"]["value"],
-            "bar": bool(settings._model_ui["zh_en"]["progress"].winfo_manager()),
         }
         settings._model_status["zh_en"] = {"status": "installed", "percent": 0, "error": ""}
 
@@ -179,8 +175,6 @@ def test_ui_states():
     print(f"       模拟进度后：{after}")
     check("进度文字含百分比与已下/总量", "%" in after.get("status", "") and "MB" in after.get("status", ""),
           after.get("status", ""))
-    check("进度条数值同步（30/71≈42%）", 40 <= float(after.get("value", 0)) <= 45, str(after.get("value")))
-    check("下载时显示进度条", after.get("bar") is True)
 
     def check_absent_state():
         settings._model_status["en_ja"] = {"status": "absent", "percent": 0, "error": ""}
