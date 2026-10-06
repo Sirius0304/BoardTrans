@@ -64,12 +64,6 @@ def _hide_close_button(top: tk.Toplevel) -> None:
         pass
 
 
-def _accent_color(tone: str) -> str:
-    """语义色 → 左侧强调条颜色。"""
-    _bg, _border, fg = ui.TONES.get(tone, ui.TONES["info"])
-    return fg
-
-
 def _card_of(top):
     """取出弹窗里的圆角卡片（弹窗的自然尺寸得靠它量）。找不到返回 None。"""
     try:
@@ -174,6 +168,10 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str,
     注意：返回时窗口仍是**撤隐**状态、且已经定好尺寸与位置，调用方必须接着调
     `_center_on_parent()` 才会真正露面（`_run` 已经这么做了）。
 
+    tone：历史上决定左侧强调条颜色；2026-10-05 强调条随标题一起移除后，
+          该参数不再影响样式（保留是为了不破坏调用方与测试的签名），
+          按钮语义色由 buttons 里的 kind 直接指定。
+
     closable=False：去掉标题栏右上角的关闭按钮（标题栏仍在）。
     frameless=True：**连整个标题栏都不要**（`overrideredirect`），弹窗就是那张圆角卡片
                     —— 用于"一句话 + 两个按钮"的极简确认框（2026-10-01 按参考样式）。
@@ -221,22 +219,20 @@ def _build(master, title: str, message: str, buttons, tone: str, default: str,
     card.pack(fill="both", expand=True, padx=ui.S(_CARD_PAD), pady=ui.S(_CARD_PAD))
     body = card.body
 
-    # 左侧语义色强调条 + 右侧文字（配色取自 TONES，与界面提示框一致）
-    row = tk.Frame(body, bg=ui.COLOR_CARD)
-    row.pack(fill="both", expand=True)
-    tk.Frame(row, bg=_accent_color(tone), width=ui.S(4)).pack(side="left", fill="y",
-                                                              padx=(0, ui.S(12)))
-    text_box = tk.Frame(row, bg=ui.COLOR_CARD)
-    text_box.pack(side="left", fill="both", expand=True)
-
-    ui.TextLabel(text_box, text=title, bg=ui.COLOR_CARD, fg=ui.COLOR_TEXT,
-                 font=ui.UI_FONT_BOLD, anchor="w", justify="left").pack(fill="x")
-    # message 为空时不占位：用于"只有一个明确表态"的简洁确认框
-    # （例如「恢复默认设置」—— 标题+两个按钮已经说清楚了，再堆一段说明反而啰嗦）。
+    # 2026-10-05 按主人要求改版：**去掉卡片内的加粗标题与左侧语义色竖线**。
+    # 有说明文字时「灰字 + 按钮」就是全部内容 —— 标题与窗口标题栏重复
+    # （标题栏上本来就有「删除模型」），再排一遍只是占地方。
+    # 特例：message 为空时（如「恢复默认设置」的极简确认框），标题是唯一内容，仍显示。
+    # tone 参数保留：它还决定按钮语义色（danger 红 / primary 蓝）。
+    # 原布局的左内边距由竖线提供（4px 竖线 + 12px 间距），删掉后文字直接从
+    # 卡片内边距（16px）起排，与下方按钮行天然对齐，无空白残留。
     if message:
-        ui.TextLabel(text_box, text=message, bg=ui.COLOR_CARD, fg=ui.COLOR_SUBTEXT,
+        ui.TextLabel(body, text=message, bg=ui.COLOR_CARD, fg=ui.COLOR_SUBTEXT,
                      font=ui.UI_FONT, anchor="w", justify="left",
-                     wraplength=ui.S(_TEXT_WRAP)).pack(fill="x", pady=(ui.S(6), 0))
+                     wraplength=ui.S(_TEXT_WRAP)).pack(fill="x")
+    else:
+        ui.TextLabel(body, text=title, bg=ui.COLOR_CARD, fg=ui.COLOR_TEXT,
+                     font=ui.UI_FONT_BOLD, anchor="w", justify="left").pack(fill="x")
 
     bar = tk.Frame(body, bg=ui.COLOR_CARD)
     bar.pack(fill="x", pady=(ui.S(14), 0))

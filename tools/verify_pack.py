@@ -33,6 +33,13 @@ CHECKS = [
     ("app.settings_window", "状态：下载完成，正在解压…", "解压文案（已去重复括号）"),
 ]
 
+# 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。
+# 2026-10-05 删掉了弹窗卡片内的加粗标题与左侧语义色竖线，
+# 竖线由 _accent_color() 取色 —— 该函数已删，包里若还能找到它就是没打进去。
+FORBIDDEN = [
+    ("app.dialogs", "_accent_color", "弹窗左侧竖线取色函数（已随竖线一起删除）"),
+]
+
 
 def consts_of(code):
     """收集字节码里出现的所有名字与字符串常量。
@@ -92,6 +99,20 @@ def main():
             hit = any(needle in c for c in pool)
             print(f"  [{'OK' if hit else 'FAIL'}] {module:22s} {desc}  ({needle})")
             ok = ok and hit
+
+        # 反向检查：确认已删除的东西不在包里
+        for module, needle, desc in FORBIDDEN:
+            pool = cache.get(module)
+            if pool is None:
+                try:
+                    pool = cache[module] = consts_of(z.extract(module))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  [FAIL] 取出 {module} 失败: {exc}")
+                    ok = False
+                    continue
+            gone = not any(needle in c for c in pool)
+            print(f"  [{'OK' if gone else 'FAIL'}] {module:22s} {desc}  (不含 {needle})")
+            ok = ok and gone
 
     # 体积与时间
     size_mb = os.path.getsize(exe) / 1024 / 1024

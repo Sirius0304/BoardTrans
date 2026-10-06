@@ -180,7 +180,9 @@ def main():
     check("对话框窗口底色 = 页面色（与设置界面一致）",
           built.get("bg") == ui.COLOR_PAGE, f"{built.get('bg')} vs {ui.COLOR_PAGE}")
     labels = built.get("labels", [])
-    check(f"对话框文字控件齐全（{len(labels)} 个）", len(labels) >= 2, str(len(labels)))
+    # 2026-10-05 样式改版：有说明文字时不再渲染卡片内标题（与窗口标题栏重复），
+    # 只留灰色说明 —— 所以一个带 message 的弹窗只有 1 个文字控件。
+    check(f"对话框文字控件齐全（{len(labels)} 个，仅说明文字）", len(labels) == 1, str(len(labels)))
     bad_font = [lb for lb in labels
                 if lb["font"].split()[0] not in (ui.UI_FONT, ui.UI_FONT_BOLD)]
     check("文字字体与设置界面同源（ShunYiBase / ShunYiBold）", not bad_font, str(bad_font[:2]))
@@ -195,9 +197,10 @@ def main():
     kinds = sorted(b["kind"] for b in btns)
     check("按钮样式分别为 danger + secondary（语义清晰）",
           kinds == ["danger", "secondary"], str(kinds))
-    check("删除类确认框左侧强调条用错误色（TONES.err）",
-          built.get("accent") == ui.TONES["err"][2],
-          f"{built.get('accent')} vs {ui.TONES['err'][2]}")
+    # 2026-10-05 样式改版：左侧语义色竖线随加粗标题一起移除（主人要求）。
+    # 锁死"没有强调条"—— 防止将来有人把竖线加回来而不告知。
+    check("确认框已无左侧强调条（样式改版后不再渲染）",
+          built.get("accent") is None, str(built.get("accent")))
     card_size = built.get("card", {}).get("size", (0, 0))
     check("圆角卡片高度自适应成功（按内容撑开，尺寸合理）",
           card_size[0] > 150 and card_size[1] > 80,
