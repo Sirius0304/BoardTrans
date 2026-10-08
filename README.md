@@ -207,7 +207,7 @@
 
 ```
 MIT License
-Copyright (c) 2026 yz050 (瞬译 / ShunYi)
+Copyright (c) 2026 yz050304 (瞬译 / ShunYi) <yz050304@163.com>
 ```
 
 > ⚠️ 分发的成品中还包含**第三方组件**，各有独立许可：
