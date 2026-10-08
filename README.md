@@ -1,5 +1,8 @@
 # 瞬译（ShunYi）· 打字即翻译
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-blue.svg)
+
 > 在任意软件里用中文打字，按一下 `Alt + J`，刚才那句话**原地变成英文或日文**。
 > 完全离线，不联网翻译，不需要 API Key。
 > 托盘右键「设置…」可打开**图形化设置界面**，管理模型、切换档位、录制快捷键。
@@ -195,3 +198,18 @@
    `"hotkey": "windows+j"`。
 7. **钩子类软件的快捷键冲突无法自动检测**：只能检测通过 `RegisterHotKey` 注册的占用；
    保存后若按键无反应，换一个更复杂的组合即可。
+
+---
+
+## 📄 许可证
+
+本项目源码采用 **MIT License** 发布，详见 [LICENSE](LICENSE)。
+
+```
+MIT License
+Copyright (c) 2026 yz050 (瞬译 / ShunYi)
+```
+
+> ⚠️ 分发的成品中还包含**第三方组件**，各有独立许可：
+> 翻译模型来自 OPUS-MT，为 **CC-BY 4.0**（**再分发须署名原作者**）；
+> 其余依赖见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
