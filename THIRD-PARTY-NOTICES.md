@@ -65,7 +65,7 @@ PyInstaller 虽是 GPLv2，但附带**明确的例外条款**，允许用它打�
 ```
 MIT License
 Copyright (c) 2026 yz050304 (键译 / BoardTrans) <yz050304@163.com>
-https://gitee.com/yz050304/shunyi
+https://gitee.com/yz050304/BoardTrans
 ```
 
 完整条款见根目录 `LICENSE`。
