@@ -276,7 +276,7 @@ def test_chip_not_clipped():
 
 def main():
     print("=" * 64)
-    print("瞬译 · 下载进度显示回归测试（界面层）")
+    print("键译 · 下载进度显示回归测试（界面层）")
     print("=" * 64)
     for fn in (test_legacy_callback_path, test_ui_monotonic,
                test_ui_monotonic_across_retry, test_high_water_reset,

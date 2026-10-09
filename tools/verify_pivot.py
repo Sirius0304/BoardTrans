@@ -10,7 +10,7 @@ import ctranslate2
 import sentencepiece
 
 ROOT = r"F:\shunyi\models"
-WORK = os.path.join(os.environ["LOCALAPPDATA"], "ShunYiTest")
+WORK = os.path.join(os.environ["LOCALAPPDATA"], "BoardTransTest")
 
 PKGS = {
     "zh_en": "translate-zh_en-1_9.argosmodel",

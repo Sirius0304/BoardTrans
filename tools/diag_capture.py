@@ -59,9 +59,9 @@ hinst = kernel32.GetModuleHandleW(None)
 wc = WNDCLASSW()
 wc.lpfnWndProc = proc
 wc.hInstance = hinst
-wc.lpszClassName = "ShunYiDiag"
+wc.lpszClassName = "BoardTransDiag"
 user32.RegisterClassW(ctypes.byref(wc))
-hwnd = user32.CreateWindowExW(0, "ShunYiDiag", "取词诊断", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+hwnd = user32.CreateWindowExW(0, "BoardTransDiag", "取词诊断", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                               CW_USEDEFAULT, CW_USEDEFAULT, 600, 160, None, None, hinst, None)
 edit = user32.CreateWindowExW(0, "EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE,
                               10, 10, 570, 100, hwnd, None, hinst, None)

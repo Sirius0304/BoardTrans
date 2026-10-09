@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""瞬译 - 统一风格的对话框（替代 tkinter.messagebox）
+"""键译 - 统一风格的对话框（替代 tkinter.messagebox）
 
 为什么要自己画（2026-09-30）：
   原生 messagebox 是**系统样式**（直角、系统配色、可能宋体），与设置窗口的自绘视觉

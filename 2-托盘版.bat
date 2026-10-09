@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title 瞬译 - 阶段二 托盘版
+title 键译 - 阶段二 托盘版
 
 if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" run_stage2.py

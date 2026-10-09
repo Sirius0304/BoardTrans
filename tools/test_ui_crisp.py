@@ -91,7 +91,7 @@ def main():
         dpi = root.winfo_fpixels("1i") or 96.0
         # 字体：负数 size 表示"像素"，必须是整数且与 DPI 匹配
         fonts = {}
-        for name in ("ShunYiBase", "ShunYiBold", "ShunYiTitle", "ShunYiSmall", "ShunYiMono",
+        for name in ("BoardTransBase", "BoardTransBold", "BoardTransTitle", "BoardTransSmall", "BoardTransMono",
                      "TkDefaultFont", "TkTextFont", "TkMenuFont"):
             # 注意：必须读 font configure，不能读 font actual ——
             # actual 会把像素字号归一化成"磅"（-13 会读成 10），看起来像没生效
@@ -166,12 +166,12 @@ def main():
     check("所有命名字体都是「像素」单位（负 size）", not non_pixel, str(non_pixel))
     expect_base = -max(9, int(round(10 * dpi / 72.0)))
     check("基准字号与 DPI 匹配（10 磅 → 整数像素）",
-          fonts.get("ShunYiBase") == expect_base,
-          f"实际={fonts.get('ShunYiBase')} 期望={expect_base}（DPI {dpi:.0f}）")
+          fonts.get("BoardTransBase") == expect_base,
+          f"实际={fonts.get('BoardTransBase')} 期望={expect_base}（DPI {dpi:.0f}）")
     expect_small = -max(9, int(round(9 * dpi / 72.0)))
     check("小字号（说明文字）同样按 DPI 换算",
-          fonts.get("ShunYiSmall") == expect_small,
-          f"实际={fonts.get('ShunYiSmall')} 期望={expect_small}")
+          fonts.get("BoardTransSmall") == expect_small,
+          f"实际={fonts.get('BoardTransSmall')} 期望={expect_small}")
 
     print("\n=== C. 开关：状态对比分明 ===")
     tstate = data.get("toggle", {})
@@ -326,7 +326,7 @@ def main():
 
         def _use_family(fam):
             def _apply():
-                for name in ("ShunYiBase", "ShunYiBold", "ShunYiTitle", "ShunYiSmall"):
+                for name in ("BoardTransBase", "BoardTransBold", "BoardTransTitle", "BoardTransSmall"):
                     settings.root.tk.call("font", "configure", name, "-family", fam)
                 settings.root.update_idletasks()
             return _apply
@@ -514,8 +514,8 @@ def main():
 
         def collect2():
             root = settings2.root
-            holder2["base"] = int(root.tk.call("font", "configure", "ShunYiBase", "-size"))
-            holder2["small"] = int(root.tk.call("font", "configure", "ShunYiSmall", "-size"))
+            holder2["base"] = int(root.tk.call("font", "configure", "BoardTransBase", "-size"))
+            holder2["small"] = int(root.tk.call("font", "configure", "BoardTransSmall", "-size"))
             holder2["scale"] = ui.scale()
             holder2["S10"] = ui.S(10)
             holder2["S46"] = ui.S(46)

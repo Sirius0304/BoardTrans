@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """核对打包产物里是否真的含最新改动（字节码级证据）。
 
-为什么要专门写这个：光看 build\\瞬译_精简\\PYZ-00.pyz 的时间戳"晚于源码"
+为什么要专门写这个：光看 build\\键译_精简\\PYZ-00.pyz 的时间戳"晚于源码"
 只能说明 PyInstaller 重编过，不能证明**改的那几行确实进了包**。
 这里把 exe 里的 PYZ 解出来，直接在字节码常量池里找特征字符串。
 
-用法：python tools/verify_pack.py瞬译.exe
+用法：python tools/verify_pack.py键译.exe
 """
 import os
 import sys
@@ -31,6 +31,11 @@ CHECKS = [
     ("app.ui_kit", "update_idletasks", "重算前刷新请求尺寸"),
     ("app.ui_kit", "pad_x", "横向内缩独立参数（修描边被盖）"),
     ("app.settings_window", "状态：下载完成，正在解压…", "解压文案（已去重复括号）"),
+    # 2026-10-09 改名 瞬译/ShunYi → 键译/BoardTrans
+    ("app.paths", "BoardTrans", "新标识 APP_NAME"),
+    ("app.paths", "键译", "新中文名"),
+    ("app.paths", "migrate_legacy_data", "旧数据目录自动迁移（改名后用户设置不丢）"),
+    ("app.settings_window", "BoardTransBase", "新命名字体"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。
@@ -68,7 +73,7 @@ def consts_of(code):
 
 
 def main():
-    exe = sys.argv[1] if len(sys.argv) > 1 else "瞬译.exe"
+    exe = sys.argv[1] if len(sys.argv) > 1 else "键译.exe"
     exe = os.path.abspath(exe)
     print("=" * 60)
     print(f"核对打包产物：{exe}")

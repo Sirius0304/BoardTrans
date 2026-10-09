@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """在打包后的 exe 上验证「通知提醒」开关（用日志判定，不依赖气泡是否可见）。
 
-原理：exe 启动 2.5 秒后会发一条「瞬译已启动」提醒。
-  - 开关=关 → 统一入口会记一行「「通知提醒」已关闭，跳过提醒：瞬译已启动 ...」
+原理：exe 启动 2.5 秒后会发一条「键译已启动」提醒。
+  - 开关=关 → 统一入口会记一行「「通知提醒」已关闭，跳过提醒：键译已启动 ...」
   - 开关=开 → 不记这一行（气泡正常发出）
 所以只要看新增日志里有没有这行，就能判定开关在打包环境里是否生效。
 
@@ -18,9 +18,9 @@ sys.path.insert(0, PROJECT)
 
 from app import config, paths  # noqa: E402
 
-EXE = os.path.join(PROJECT, "dist", "瞬译.exe")
+EXE = os.path.join(PROJECT, "dist", "键译.exe")
 LOG = paths.log_path()
-MARK = "跳过提醒：瞬译已启动"
+MARK = "跳过提醒：键译已启动"
 
 
 def log_size():
@@ -40,7 +40,7 @@ def run_exe_once(seconds=8.0):
     proc = subprocess.Popen([EXE], cwd=os.path.dirname(EXE),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(seconds)
-    subprocess.run(["taskkill", "/IM", "瞬译.exe", "/F"],
+    subprocess.run(["taskkill", "/IM", "键译.exe", "/F"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         proc.wait(timeout=10)

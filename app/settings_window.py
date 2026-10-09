@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 · 设置窗口（tkinter / ttk）
+键译 · 设置窗口（tkinter / ttk）
 
 设计要点
 --------
@@ -68,13 +68,13 @@ FONT_FALLBACK_CN = "微软雅黑"
 FONT_LAST_RESORT = "黑体"
 FONT_LAST_RESORT2 = "SimHei"
 
-# ttk 样式里引用字体时**只能写命名字体名本身**（如 "ShunYiBase"）。
-# 坑（2026-09-29 实测）：写成元组 ("ShunYiBase", 10) 后 Tcl 端会变成字符串
-# "ShunYiBase 10"，Tk 把它当"字体描述"解析 —— 族名取 "ShunYiBase"（系统里并不存在
+# ttk 样式里引用字体时**只能写命名字体名本身**（如 "BoardTransBase"）。
+# 坑（2026-09-29 实测）：写成元组 ("BoardTransBase", 10) 后 Tcl 端会变成字符串
+# "BoardTransBase 10"，Tk 把它当"字体描述"解析 —— 族名取 "BoardTransBase"（系统里并不存在
 # 这个字体族）→ 静默回退成宋体，于是按钮/单选/复选全长成宋体，而显式写
-# font="ShunYiBold" 的「保存」按钮却是黑体。用命名字体名即可正常解析。
-UI_FONT = "ShunYiBase"
-UI_FONT_BOLD = "ShunYiBold"
+# font="BoardTransBold" 的「保存」按钮却是黑体。用命名字体名即可正常解析。
+UI_FONT = "BoardTransBase"
+UI_FONT_BOLD = "BoardTransBold"
 
 # ----------------------------------------------------------------- 外观常量
 # 统一走 ui_kit 的设计令牌（参考图配色：近白页面 + 白卡片 + 浅灰描边 + 蓝色主色）。
@@ -293,7 +293,7 @@ class SettingsWindow:
                 "翻译功能不受影响，仍然可以正常使用。")
         log.error("tkinter 不可用，无法打开设置窗口: %s", TK_IMPORT_ERROR)
         try:
-            ctypes.windll.user32.MessageBoxW(None, text, "瞬译 · 无法打开设置", 0x00000030)
+            ctypes.windll.user32.MessageBoxW(None, text, "键译 · 无法打开设置", 0x00000030)
         except Exception:  # noqa: BLE001
             pass
 
@@ -334,7 +334,7 @@ class SettingsWindow:
             # 渲染二十多张自绘/文字图 —— 不先隐藏的话，屏幕上会先闪一个空白/半成品
             # 窗口出来（预热时更是全程可见）。真正的显示交给 _show() 的 deiconify。
             self.root.withdraw()
-            self.root.title("瞬译 · 设置")
+            self.root.title("键译 · 设置")
             self.root.configure(bg=COLOR_BG)
             self._apply_theme()
             self._build_ui()
@@ -388,11 +388,11 @@ class SettingsWindow:
         # 字号用**整数像素**（Tk 里负数表示像素）：磅值在 DPI 缩放下会算成 13.34px 这类
         # 小数，字形落不到整像素上会显得发虚；直接给像素值最锐利，也方便按 DPI 等比放大。
         for name, pt, weight in (
-            ("ShunYiBase", 10, "normal"),
-            ("ShunYiBold", 10, "bold"),
-            ("ShunYiTitle", 12, "bold"),
-            ("ShunYiSmall", 9, "normal"),
-            ("ShunYiMono", 11, "normal"),
+            ("BoardTransBase", 10, "normal"),
+            ("BoardTransBold", 10, "bold"),
+            ("BoardTransTitle", 12, "bold"),
+            ("BoardTransSmall", 9, "normal"),
+            ("BoardTransMono", 11, "normal"),
         ):
             pixels = -max(9, int(round(pt * dpi / 72.0)))
             try:
@@ -492,13 +492,13 @@ class SettingsWindow:
 
         # 兼容历史样式名（卡片标题/说明在旧代码里可能引用到）
         style.configure("Card.TFrame", background=COLOR_CARD, relief="flat")
-        style.configure("CardTitle.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT, font="ShunYiTitle")
+        style.configure("CardTitle.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT, font="BoardTransTitle")
         style.configure("CardText.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT)
-        style.configure("CardSub.TLabel", background=COLOR_CARD, foreground=COLOR_SUBTEXT, font="ShunYiSmall")
-        style.configure("CardOk.TLabel", background=COLOR_CARD, foreground=COLOR_OK, font="ShunYiBold")
-        style.configure("CardErr.TLabel", background=COLOR_CARD, foreground=COLOR_ERR, font="ShunYiBold")
-        style.configure("Hint.TLabel", background=COLOR_BG, foreground=COLOR_SUBTEXT, font="ShunYiSmall")
-        style.configure("Big.TButton", font="ShunYiBold", padding=(16, 6))
+        style.configure("CardSub.TLabel", background=COLOR_CARD, foreground=COLOR_SUBTEXT, font="BoardTransSmall")
+        style.configure("CardOk.TLabel", background=COLOR_CARD, foreground=COLOR_OK, font="BoardTransBold")
+        style.configure("CardErr.TLabel", background=COLOR_CARD, foreground=COLOR_ERR, font="BoardTransBold")
+        style.configure("Hint.TLabel", background=COLOR_BG, foreground=COLOR_SUBTEXT, font="BoardTransSmall")
+        style.configure("Big.TButton", font="BoardTransBold", padding=(16, 6))
         style.configure("TButton", padding=(10, 5))
 
         # 窗口图标（用 Pillow 画的那个，不依赖外部文件）
@@ -536,16 +536,16 @@ class SettingsWindow:
         # 顶部标题（紧凑：标题 + 一行说明）
         header = tk.Frame(outer, bg=COLOR_BG)
         header.pack(fill="x", padx=14, pady=(12, 10))
-        ui.TextLabel(header, text="瞬译 设置", bg=COLOR_BG, fg=COLOR_TEXT,
+        ui.TextLabel(header, text="键译 设置", bg=COLOR_BG, fg=COLOR_TEXT,
                  font=UI_FONT_BOLD).pack(anchor="w")
         ui.TextLabel(header, text="管理翻译模型、目标语言、档位与快捷键；点「保存」后立即生效。",
-                 bg=COLOR_BG, fg=COLOR_SUBTEXT, font="ShunYiSmall").pack(anchor="w", pady=(2, 0))
+                 bg=COLOR_BG, fg=COLOR_SUBTEXT, font="BoardTransSmall").pack(anchor="w", pady=(2, 0))
 
         # 未保存提示条（常驻型，贴在窗口底部、按钮行上方；见 _update_dirty_bar）
         self._dirty_panel = ui.RoundedPanel(outer, tone="warn", radius=8, pad=4, page_bg=COLOR_BG)
         self._dirty_bar = self._dirty_panel            # 兼容既有引用/测试
         self._dirty_label = ui.TextLabel(self._dirty_panel.inner, text="", bg=COLOR_WARN_BG,
-                                     fg=COLOR_WARN_FG, font="ShunYiSmall", anchor="w",
+                                     fg=COLOR_WARN_FG, font="BoardTransSmall", anchor="w",
                                      justify="left", wraplength=ui.S(470))
         self._dirty_label.pack(fill="x", padx=8, pady=4)
 
@@ -555,7 +555,7 @@ class SettingsWindow:
         self._notice_box = ui.RoundedPanel(outer, tone="ok", radius=8, pad=4, page_bg=COLOR_BG,
                                            shadow=True, fit_width=True)
         self._notice_label = ui.TextLabel(self._notice_box.inner, text="", bg=COLOR_OK_BG,
-                                      fg=ui.COLOR_OK_TEXT, font="ShunYiSmall", anchor="w",
+                                      fg=ui.COLOR_OK_TEXT, font="BoardTransSmall", anchor="w",
                                       justify="left", wraplength=ui.S(470), auto_wrap=False)
         # auto_wrap=False：小框的宽度本来就是"跟着文字走"（RoundedPanel fit_width），
         # 若再让它按控件实际宽度回环重排，会两边互相追着变。折行宽度改由 _show_notice
@@ -666,7 +666,7 @@ class SettingsWindow:
 
     # -- 小组件 ------------------------------------------------------------
 
-    def _note_box(self, parent, text: str, tone: str = "info", font: str = "ShunYiSmall",
+    def _note_box(self, parent, text: str, tone: str = "info", font: str = "BoardTransSmall",
                   wraplength: int = 470) -> ui.RoundedPanel:
         """圆角提示框（对应参考图里的浅蓝说明框）。"""
         box = ui.RoundedPanel(parent, tone=tone, radius=8, pad=4, page_bg=COLOR_CARD)
@@ -694,7 +694,7 @@ class SettingsWindow:
         chip = ui.RoundedPanel(parent, tone="plain", radius=999, pad=2, pad_x=12,
                                page_bg=COLOR_CARD, fit_width=True)
         chip.label = ui.TextLabel(chip.inner, text=text, bg=ui.COLOR_HOVER, fg=COLOR_SUBTEXT,
-                              font="ShunYiSmall", anchor="w")
+                              font="BoardTransSmall", anchor="w")
         chip.label.pack(padx=1, pady=1)
 
         def _configure(cnf=None, **kw):
@@ -762,7 +762,7 @@ class SettingsWindow:
         row.pack(fill="x")
         ui.IconBadge(row, badge, size=20, tint=ui.TONES[tone][0]).pack(side="left", padx=(0, 6))
         ui.TextLabel(row, text=title, bg=COLOR_CARD, fg=ui.TONES[tone][2],
-                 font="ShunYiSmall").pack(side="left")
+                 font="BoardTransSmall").pack(side="left")
         return row
 
     def _build_models_section(self, parent) -> None:
@@ -776,7 +776,7 @@ class SettingsWindow:
         where = f"模型存放位置：{root_dir}"
         if not is_program_dir:
             where += "（软件所在目录含中文或不可写，已自动回退到这里；把软件放到纯英文路径即可改用软件目录）"
-        ui.TextLabel(card, text=where, bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
+        ui.TextLabel(card, text=where, bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="BoardTransSmall",
                  anchor="w", justify="left", wraplength=ui.S(440)).pack(fill="x", pady=(0, 8))
 
         for info in MODEL_CARDS:
@@ -791,9 +791,9 @@ class SettingsWindow:
             ui.TextLabel(title_line, text=info["title"], bg=COLOR_CARD, fg=COLOR_TEXT,
                      font=UI_FONT_BOLD).pack(side="left")
             ui.TextLabel(title_line, text=info["direction"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                     font="ShunYiSmall").pack(side="left", padx=(8, 0))
+                     font="BoardTransSmall").pack(side="left", padx=(8, 0))
             ui.TextLabel(title_line, text=info["size_text"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                     font="ShunYiSmall").pack(side="left", padx=(8, 0))
+                     font="BoardTransSmall").pack(side="left", padx=(8, 0))
 
             status = self._status_chip(left)
             status.pack(anchor="w", pady=(4, 0))
@@ -802,7 +802,7 @@ class SettingsWindow:
             action.pack(side="right", padx=(10, 0))
 
             note = ui.TextLabel(card, text=info["note"], bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                            font="ShunYiSmall", anchor="w", justify="left", wraplength=ui.S(440))
+                            font="BoardTransSmall", anchor="w", justify="left", wraplength=ui.S(440))
             note.pack(fill="x", pady=(0, 10))
 
             self._model_ui[key] = {
@@ -853,7 +853,7 @@ class SettingsWindow:
                                            page_bg=COLOR_CARD)
         self._lang_group.pack(anchor="w", pady=(0, 6))
         self._lang_desc = ui.TextLabel(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                                   font="ShunYiSmall", anchor="w", justify="left", wraplength=ui.S(440))
+                                   font="BoardTransSmall", anchor="w", justify="left", wraplength=ui.S(440))
         self._lang_desc.pack(fill="x", pady=(0, 6))
         self._lang_var.trace_add("write", lambda *_: self._sync_lang_desc())
         self._sync_lang_desc()
@@ -882,7 +882,7 @@ class SettingsWindow:
                                               page_bg=COLOR_CARD)
         self._quality_group.pack(anchor="w", pady=(0, 6))
         self._speed_hint = ui.TextLabel(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                                    font="ShunYiSmall", justify="left", anchor="w",
+                                    font="BoardTransSmall", justify="left", anchor="w",
                                     wraplength=ui.S(440))
         self._speed_hint.pack(fill="x")
 
@@ -901,7 +901,7 @@ class SettingsWindow:
     def _build_hotkey_section(self, parent) -> None:
         card = self._card(parent, "快捷键", icon="hotkey")
         ui.TextLabel(card, text="按一下就能把刚打的中文变成译文。", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                 font="ShunYiSmall").pack(anchor="w", pady=(0, 6))
+                 font="BoardTransSmall").pack(anchor="w", pady=(0, 6))
 
         line = tk.Frame(card, bg=COLOR_CARD)
         line.pack(fill="x")
@@ -909,7 +909,7 @@ class SettingsWindow:
         shell = ui.RoundedPanel(line, tone="plain", radius=8, pad=3, page_bg=COLOR_CARD,
                                 fill=COLOR_CARD, border=ui.COLOR_BORDER_STRONG, fit_width=True)
         shell.pack(side="left")
-        self._hotkey_entry = tk.Entry(shell.inner, font="ShunYiMono", justify="center", width=14,
+        self._hotkey_entry = tk.Entry(shell.inner, font="BoardTransMono", justify="center", width=14,
                                       relief="flat", bd=0, bg=COLOR_CARD, fg=COLOR_TEXT,
                                       readonlybackground=COLOR_CARD,
                                       highlightthickness=0)
@@ -923,7 +923,7 @@ class SettingsWindow:
                          page_bg=COLOR_CARD, command=self._reset_hotkey).pack(side="left", padx=(8, 0))
 
         self._hotkey_hint = ui.TextLabel(card, text="要求：至少包含一个 Ctrl / Alt / Shift，再加一个主键（例如 Alt+J）。",
-                                     bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="ShunYiSmall",
+                                     bg=COLOR_CARD, fg=COLOR_SUBTEXT, font="BoardTransSmall",
                                      anchor="w", justify="left", wraplength=ui.S(440))
         self._hotkey_hint.pack(fill="x", pady=(8, 0))
         self._note_box(card, "说明：Win 键组合无法在窗口内录制（会被系统占用），"

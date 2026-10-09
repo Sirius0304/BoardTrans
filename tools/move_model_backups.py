@@ -8,7 +8,7 @@ import os
 import shutil
 
 SRC = r"F:\shunyi\models"
-DST = r"F:\瞬译_备份_20260927\离线部署用模型包"
+DST = r"F:\键译_备份_20260927\离线部署用模型包"
 
 print("=" * 66)
 print("  把项目里的模型备份移到外部备份目录")

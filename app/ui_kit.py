@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""瞬译 - 设置窗口的界面套件（视觉组件）
+"""键译 - 设置窗口的界面套件（视觉组件）
 
 为什么单独一个模块：Tk 原生控件是"方角 + 系统观感"，要做到参考图那种
 「近白页面底 + 白卡片 + 1px 浅灰描边 + 圆角 + 蓝色主按钮 + iOS 风格开关」
@@ -125,10 +125,10 @@ PAD_CARD = 12
 GAP_SECTION = 8
 
 # 字体（黑体，见 settings_window 的字体探测）
-UI_FONT = "ShunYiBase"
-UI_FONT_BOLD = "ShunYiBold"
-UI_FONT_SMALL = "ShunYiSmall"
-UI_FONT_MONO = "ShunYiMono"
+UI_FONT = "BoardTransBase"
+UI_FONT_BOLD = "BoardTransBold"
+UI_FONT_SMALL = "BoardTransSmall"
+UI_FONT_MONO = "BoardTransMono"
 
 # --------------------------------------------------------------- 尺寸缩放
 # 像素型设计值（圆角、间距、控件高度）必须跟着 DPI 一起放大，

@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import models, paths   # noqa: E402
 
-RUN_DIR = os.path.join(os.environ["LOCALAPPDATA"], "ShunYi")
+RUN_DIR = os.path.join(os.environ["LOCALAPPDATA"], "BoardTrans")
 PROJECT = r"F:\shunyi"
 
 
@@ -37,7 +37,7 @@ print(f"    packages_dir() = {paths.packages_dir()}")
 print(f"    models_dir()   = {paths.models_dir()}   ← 下载缓存（.argosmodel 压缩包）")
 print(f"    data_dir()     = {paths.data_dir()}")
 
-walk_report(RUN_DIR, "运行数据目录 %LOCALAPPDATA%\\ShunYi")
+walk_report(RUN_DIR, "运行数据目录 %LOCALAPPDATA%\\BoardTrans")
 
 # 程序认为的安装状态
 print("\n  【程序判断的安装状态】")

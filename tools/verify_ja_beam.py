@@ -5,7 +5,7 @@ import os
 import ctranslate2
 import sentencepiece
 
-WORK = os.path.join(os.environ["LOCALAPPDATA"], "ShunYiTest")
+WORK = os.path.join(os.environ["LOCALAPPDATA"], "BoardTransTest")
 JA = os.path.join(WORK, "en_ja")
 
 SENTS = [

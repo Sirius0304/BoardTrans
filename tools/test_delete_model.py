@@ -148,7 +148,7 @@ def main():
     # 离线部署用的模型备份已移到外部备份目录（避免被当成"副本"清理），这里确认它安然无恙。
     # 该目录是**外部**的、可能被主人清理掉 —— 不存在时无法验证，跳过而不是判失败
     # （2026-10-01：实测环境里它已被删，导致这条断言长期假失败）。
-    backup_dir = r"F:\瞬译_备份_20260927\离线部署用模型包"
+    backup_dir = r"F:\键译_备份_20260927\离线部署用模型包"
     if os.path.isdir(backup_dir):
         has_backup = any(f.lower().endswith(".argosmodel") for f in os.listdir(backup_dir))
         check("离线部署用的模型备份仍在（未被误删）", has_backup,

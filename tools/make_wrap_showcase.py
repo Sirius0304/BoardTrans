@@ -16,7 +16,7 @@ from app import ui_kit as ui                  # noqa: E402
 TEXT = ("这个组合不行：必须至少包含一个 Ctrl / Alt / Shift"
         "（不能只用单个键，否则会干扰你正常打字）。")
 LIMIT = 277          # 与真实窗口里该 Label 的可用宽度一致
-PX = 12              # ShunYiSmall = 9pt @96dpi = 12px
+PX = 12              # BoardTransSmall = 9pt @96dpi = 12px
 SS = 3
 FONT_FILE = r"C:\Windows\Fonts\msyh.ttc"
 FG = (220, 38, 38)   # COLOR_ERR（这条提示是错误态）

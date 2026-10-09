@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 - 翻译引擎
+键译 - 翻译引擎
 
 技术路线：CTranslate2 + SentencePiece 直接加载 OPUS-MT（Marian）神经网络翻译模型。
 之所以不直接依赖 argostranslate 库：它的依赖链会拉入 stanza -> torch（安装体积 2GB+），

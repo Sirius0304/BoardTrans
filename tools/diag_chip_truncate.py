@@ -34,7 +34,7 @@ left.pack(side="left", fill="x", expand=True)
 chip = ui.RoundedPanel(left, tone="plain", radius=999, pad=2, page_bg=ui.COLOR_CARD,
                        fit_width=True)
 chip.label = ui.TextLabel(chip.inner, text="状态：未下载", bg=ui.COLOR_HOVER,
-                          fg="#6B7280", font="ShunYiSmall", anchor="w")
+                          fg="#6B7280", font="BoardTransSmall", anchor="w")
 chip.label.pack(padx=8, pady=1)
 chip.pack(anchor="w", pady=(4, 0))
 

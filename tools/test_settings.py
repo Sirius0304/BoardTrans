@@ -83,7 +83,7 @@ def main():
     time.sleep(0.8)
 
     print("\n=== 2. 界面元素检查 ===")
-    check("窗口标题正确", holder.get("title") == "瞬译 · 设置", holder.get("title", ""))
+    check("窗口标题正确", holder.get("title") == "键译 · 设置", holder.get("title", ""))
     check("模型卡片齐全（两个）", sorted(holder.get("model_keys", [])) == ["en_ja", "zh_en"],
           str(holder.get("model_keys")))
     check("窗口处于可见状态", holder.get("visible") == "normal", str(holder.get("visible")))

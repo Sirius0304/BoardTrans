@@ -43,7 +43,7 @@ for dp, dn, fn in os.walk(ROOT):
         pycache += du(os.path.join(dp, "__pycache__"))
         dn.remove("__pycache__")
 dist = du(os.path.join(ROOT, "dist"))
-exe = du(os.path.join(ROOT, "瞬译.exe"))
+exe = du(os.path.join(ROOT, "键译.exe"))
 venv = du(os.path.join(ROOT, ".venv"))
 models = du(os.path.join(ROOT, "models"))
 git = du(os.path.join(ROOT, ".git"))
@@ -68,7 +68,7 @@ REPORT = f"""# 项目文件体检报告
 | `.git/` | {mb(git)} | 版本历史（**绝不可删**） |
 | `build/` | {mb(build1)} | 打包中间产物（可重建） |
 | `build_selftest/` | {mb(build2)} | 自检打包中间产物（可重建） |
-| `瞬译.exe` | {mb(exe)} | 成品（可由 `3-打包exe.bat` 重建） |
+| `键译.exe` | {mb(exe)} | 成品（可由 `3-打包exe.bat` 重建） |
 | `dist/` | {mb(dist)} | 上一版成品归档 |
 | `docs/` | {mb(docs)} | 文档与取证截图 |
 | `app/` `tools/` | 约 1.3 MB | **源码，必需** |
@@ -78,7 +78,7 @@ REPORT = f"""# 项目文件体检报告
 | 文件 | 作用 |
 |---|---|
 | `app/`（17 个 .py） | **程序核心代码**，缺一不可 |
-| `瞬译_精简.spec` | 打包配置（手写精简参数，删了打包会失败） |
+| `键译_精简.spec` | 打包配置（手写精简参数，删了打包会失败） |
 | `自检_精简.spec` | 自检打包配置 |
 | `app_icon.ico` | exe 图标来源 |
 | `requirements.txt` | 依赖清单，`0-准备环境.bat` 要用 |
@@ -99,7 +99,7 @@ REPORT = f"""# 项目文件体检报告
 | `build/` | {mb(build1)} | PyInstaller 中间产物，打包时自动重建 |
 | `build_selftest/` | {mb(build2)} | 同上（自检版） |
 | 全部 `__pycache__/` | {mb(pycache)} | Python 字节码缓存，首次运行自动生成 |
-| `dist/瞬译_上一版.exe` | {mb(dist)} | 旧版归档；确认新版没问题后即可删 |
+| `dist/键译_上一版.exe` | {mb(dist)} | 旧版归档；确认新版没问题后即可删 |
 
 小计约 **{mb(safe + optional)}** 可回收。
 
@@ -136,7 +136,7 @@ REPORT = f"""# 项目文件体检报告
 ## 附：一条命令清掉所有"可放心删除"项
 
 ```bat
-del /q 瞬译.exe.bak 2>nul
+del /q 键译.exe.bak 2>nul
 rmdir /s /q build build_selftest
 for /d /r . %d in (__pycache__) do @if exist "%d" rmdir /s /q "%d"
 ```

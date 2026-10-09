@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 - 模型管理
+键译 - 模型管理
 
 负责离线翻译模型的下载、校验、安装（解压）与就绪检查。
 
@@ -37,7 +37,7 @@ from .logger import get_logger
 
 log = get_logger()
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ShunYi/1.0"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BoardTrans/1.0"
 
 # ---------------------------------------------------------------------------
 # 下载参数
@@ -778,7 +778,7 @@ def describe_locations(key: str) -> list[tuple[str, int]]:
 def migrate_legacy_models() -> list[str]:
     """把旧位置（数据目录下）的模型搬到新的模型根目录，避免用户白白重新下载。
 
-    背景：模型默认位置从「%LOCALAPPDATA%\\ShunYi」改成了「软件目录\\models」。
+    背景：模型默认位置从「%LOCALAPPDATA%\\BoardTrans」改成了「软件目录\\models」。
     老用户升级后模型还在旧地方，直接改路径会让他们以为模型丢了、重新下 186 MB。
     这里做一次性搬迁，只在"新位置还没有内容"时才搬，不会覆盖任何东西。
 

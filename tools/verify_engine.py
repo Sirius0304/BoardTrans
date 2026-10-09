@@ -11,7 +11,7 @@ import sentencepiece
 ROOT = r"F:\shunyi\models"
 PKG = os.path.join(ROOT, "translate-zh_en-1_9.argosmodel")
 # 关键：运行数据必须放在纯 ASCII 路径，sentencepiece 无法打开含中文的路径
-WORK = os.path.join(os.environ["LOCALAPPDATA"], "ShunYiTest")
+WORK = os.path.join(os.environ["LOCALAPPDATA"], "BoardTransTest")
 OUT = os.path.join(WORK, "zh_en")
 TMP = os.path.join(WORK, "_tmp_extract")
 

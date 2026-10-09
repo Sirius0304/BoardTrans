@@ -4,7 +4,7 @@
 三层验证：
   A. 机制层：命名互斥体判定 + 命名事件信号（同进程）
   B. 跨进程：另一个进程拿到"已存在"结论并通过事件把信号发回来
-  C. 端到端：真实启动两次（默认 python 入口；加 --exe 用打包好的 瞬译.exe），
+  C. 端到端：真实启动两次（默认 python 入口；加 --exe 用打包好的 键译.exe），
      断言第二次**很快退出且返回码 0**、进程数仍为 1、
      并且第一个实例被唤起（日志出现设置窗口创建记录）
 
@@ -44,7 +44,7 @@ def _drain(proc, sink):
 
 def _launch():
     if USE_EXE:
-        exe = os.path.join(PROJECT, "瞬译.exe")
+        exe = os.path.join(PROJECT, "键译.exe")
         cmd = [exe]
     else:
         cmd = [sys.executable, os.path.join(PROJECT, "run_stage2.py")]
@@ -82,7 +82,7 @@ def _exe_process_count() -> int:
     count = 0
     if k32.Process32FirstW(snap, ctypes.byref(entry)):
         while True:
-            if "瞬译" in entry.szExeFile:
+            if "键译" in entry.szExeFile:
                 count += 1
             if not k32.Process32NextW(snap, ctypes.byref(entry)):
                 break

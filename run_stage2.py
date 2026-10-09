@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 · 阶段二：托盘常驻完整版（含图形化设置界面）
+键译 · 阶段二：托盘常驻完整版（含图形化设置界面）
 ==================================================
 
 在原有「托盘 + 全局热键 + 离线翻译」基础上新增：
@@ -35,7 +35,7 @@ def main() -> int:
     from app import ui_kit as ui                             # noqa: E402
     aware = ui.enable_dpi_awareness()
 
-    safe_print("瞬译 正在启动...")
+    safe_print("键译 正在启动...")
     safe_print("  数据目录: " + paths.data_dir())
     safe_print("  高 DPI 适配: " + aware)
 
@@ -44,9 +44,9 @@ def main() -> int:
     from app import single_instance                          # noqa: E402
     lock = single_instance.acquire()
     if not lock.is_first:
-        safe_print("  检测到「瞬译」已经在运行，正在唤起已存在的窗口…")
+        safe_print("  检测到「键译」已经在运行，正在唤起已存在的窗口…")
         # ASCII 标记行：便于自动化测试/日志排查不依赖中文编码（控制台编码可能是 GBK/U8）
-        safe_print("  [ShunYi] already running -> requested the existing instance "
+        safe_print("  [BoardTrans] already running -> requested the existing instance "
                    "to show its settings window")
         if single_instance.signal_show():
             safe_print("  已通知正在运行的实例打开设置窗口，本进程即将退出。")

@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageGrab   # noqa: E402
 
 FONT_FILE = r"C:\Windows\Fonts\msyh.ttc"
 FONT_INDEX = 1          # Microsoft YaHei UI
-PX = 12                 # 与项目 ShunYiSmall 一致（9pt @96dpi = 12px）
+PX = 12                 # 与项目 BoardTransSmall 一致（9pt @96dpi = 12px）
 FG = (107, 114, 128)    # #6B7280 次要文字
 BG = (255, 255, 255)
 TEXT = "已下载 12.3 / 71.0 MB，正在校验（通知提醒·日文方向）"

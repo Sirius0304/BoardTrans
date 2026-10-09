@@ -18,7 +18,7 @@
 22255 INFO: Build complete! The results are available in: F:\shunyi\dist
 
 ============================================================
-  打包结束。生成的 exe 在 dist 文件夹里：dist\瞬译.exe
+  打包结束。生成的 exe 在 dist 文件夹里：dist\键译.exe
   双击即可运行，不需要安装 Python。
 ============================================================
 ```
@@ -28,7 +28,7 @@
 ```
 F:\shunyi\
 ├── dist\
-│   └── 瞬译.exe          ← 最终成果，约 50 MB
+│   └── 键译.exe          ← 最终成果，约 50 MB
 └── build\                ← 打包临时文件，可以删掉
 ```
 
@@ -52,7 +52,7 @@ F:\shunyi\
 
 ```bat
 pyinstaller --noconfirm --clean --onefile --windowed ^
-    --name "瞬译" ^
+    --name "键译" ^
     --icon "app_icon.ico" ^
     --hidden-import pystray._win32 ^
     --collect-all ctranslate2 ^
@@ -61,8 +61,8 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
     run_stage2.py
 ```
 
-> 注（2026-09-28 起）：**现在推荐直接双击项目根的 `3-打包exe.bat`**（它读取 `瞬译_精简.spec`），
-> 产物**直接生成在项目根目录** `瞬译.exe`，上一版自动归档到 `dist\瞬译_上一版.exe`。
+> 注（2026-09-28 起）：**现在推荐直接双击项目根的 `3-打包exe.bat`**（它读取 `键译_精简.spec`），
+> 产物**直接生成在项目根目录** `键译.exe`，上一版自动归档到 `dist\键译_上一版.exe`。
 > 上面这段是最早那版的原始命令记录，其中的 `--distpath "dist"` 已不是现在的输出位置。
 
 **原因（实测踩过的坑）**：`ctranslate2` 的核心是一个 56.5 MB 的原生动态库 `ctranslate2.dll`。
@@ -76,7 +76,7 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
 |---|---|
 | `--onefile` | 打包成单个 exe（而不是一堆文件的文件夹） |
 | `--windowed` | 不显示黑色控制台窗口（托盘程序不需要） |
-| `--name "瞬译"` | exe 的名字 |
+| `--name "键译"` | exe 的名字 |
 | `--icon "app_icon.ico"` | 给 exe 设置图标 |
 | `--hidden-import pystray._win32` | 托盘库在 Windows 下的后端，PyInstaller 有时分析不到，要手动指定 |
 | `--collect-all sentencepiece` | 同样是为了收集分词器的原生模块 |
@@ -89,7 +89,7 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
 
 ## 测试打包好的 exe
 
-1. 打开 `F:\shunyi\dist` 文件夹，**双击 `瞬译.exe`**
+1. 打开 `F:\shunyi\dist` 文件夹，**双击 `键译.exe`**
 2. 首次启动可能需要 5～10 秒（解压 + 加载模型），然后右下角出现蓝色"译"图标
 3. 打开记事本，打中文，按 `Alt + J`，验证是否原地变英文
 
@@ -108,7 +108,7 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
 ```
   ctranslate2: 4.8.2
   sentencepiece: OK
-  数据目录: C:\Users\你的用户名\AppData\Local\ShunYi
+  数据目录: C:\Users\你的用户名\AppData\Local\BoardTrans
   [en/fast] 你好，今天天气不错。  ->  Hello, it's a nice day.   (22 ms)
   结论：EXE 环境翻译引擎工作正常。
 ```
@@ -121,7 +121,7 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
 模型统一放在：
 
 ```
-C:\Users\你的用户名\AppData\Local\ShunYi\packages\
+C:\Users\你的用户名\AppData\Local\BoardTrans\packages\
 ```
 
 | 情况 | 表现 |
@@ -132,7 +132,7 @@ C:\Users\你的用户名\AppData\Local\ShunYi\packages\
 **想彻底离线分发（连模型一起给别人）**：把下面两个文件夹一起拷过去即可
 
 ```
-C:\Users\你的用户名\AppData\Local\ShunYi\packages\        ← 复制到对方同样的位置
+C:\Users\你的用户名\AppData\Local\BoardTrans\packages\        ← 复制到对方同样的位置
 ```
 
 ---
@@ -142,7 +142,7 @@ C:\Users\你的用户名\AppData\Local\ShunYi\packages\        ← 复制到对�
 | 现象 | 原因与解决办法 |
 |---|---|
 | exe 双击没反应，也不报错 | 用 `--onedir` 重新打包，或者把 `--windowed` 临时去掉（改成 `--console`），这样能看到报错信息 |
-| exe 启动后没托盘图标 | 首次启动要 5～10 秒解压，稍等；若一直没有，看日志文件 `...\AppData\Local\ShunYi\logs\shunyi.log` |
+| exe 启动后没托盘图标 | 首次启动要 5～10 秒解压，稍等；若一直没有，看日志文件 `...\AppData\Local\BoardTrans\logs\shunyi.log` |
 | 杀毒软件/Windows Defender 报毒或直接删除 exe | PyInstaller 打包的程序经常被误报（因为它会"模拟键盘输入"，行为特征敏感）。解决：在杀软里把 `dist` 文件夹加白名单；或把 exe 提交给杀软厂商申诉 |
 | 打包时报 `ModuleNotFoundError` | 该模块没被 PyInstaller 分析到，用 `--hidden-import 模块名` 补上 |
 | exe 有 120 MB+，比预期大 | 检查是不是误把 `--collect-all` 加到了 numpy 等大库上；或者之前打包的 `build` 目录没清理，加 `--clean` 参数 |
@@ -156,7 +156,7 @@ C:\Users\你的用户名\AppData\Local\ShunYi\packages\        ← 复制到对�
 
 | 文件 | 用途 |
 |---|---|
-| `dist\瞬译.exe` | ⭐ 最终成果，双击即用，可拷给别人 |
+| `dist\键译.exe` | ⭐ 最终成果，双击即用，可拷给别人 |
 | `0-自检.bat` / `checkup.py` | 出问题时的一键体检工具 |
 | `1-控制台版.bat` / `run_stage1.py` | 阶段一控制台版（排查问题用，出错误能直接看到） |
 | `2-托盘版.bat` / `run_stage2.py` | 阶段二脚本版（改代码后不用重新打包就能试） |

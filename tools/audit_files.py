@@ -45,7 +45,7 @@ def human(n):
 
 
 print("=" * 68)
-print(f"瞬译 项目文件体检  ({ROOT})")
+print(f"键译 项目文件体检  ({ROOT})")
 print("=" * 68)
 
 # ---- 顶层条目

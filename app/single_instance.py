@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""瞬译 - 单实例控制（Windows 命名内核对象）
+"""键译 - 单实例控制（Windows 命名内核对象）
 
 解决的问题（2026-09-30 报障）：exe 可以被重复启动，系统托盘出现多个图标。
 
@@ -35,7 +35,7 @@ from .logger import get_logger
 
 log = get_logger()
 
-APP_ID = "ShunYi"
+APP_ID = "BoardTrans"
 MUTEX_NAME = f"Local\\{APP_ID}.SingleInstance"
 EVENT_NAME = f"Local\\{APP_ID}.ShowSettings"
 
@@ -174,7 +174,7 @@ def listen_show(app_id: str = APP_ID, callback=None, poll_ms: int = 1000) -> thr
 #   本程序用 PyInstaller **onefile** 打包，双击时是"引导父进程 + 应用子进程"两层。
 #   第二个实例检测到已有实例后会立刻退出（这是我们要的），但 PyInstaller 的引导父进程
 #   在子进程过早退出时**会长时间滞留不退出**（实测 25 秒以上仍存活，等待 0/3/6 秒
-#   再退出都无效），表现为任务管理器里多一个 瞬译.exe、且它占着的解包临时目录不被清理。
+#   再退出都无效），表现为任务管理器里多一个 键译.exe、且它占着的解包临时目录不被清理。
 #   因此第二实例在退出前主动结束"自己的引导父进程"（只在父进程就是同一个可执行文件时
 #   才动手，python 入口下父进程是 shell/解释器，绝不会误杀），并在**第一个实例启动时**
 #   清理属于自己、且不再被占用的陈旧解包目录 —— 双向兜底，不留垃圾。
@@ -283,7 +283,7 @@ def cleanup_stale_runtime_dirs(marker: str = "app_icon.ico") -> int:
 
     三条闸门同时满足才删（避免误删别人的临时目录、也避免删掉正在运行的实例自己的目录）：
       1) 目录形如 _MEI*，且位于当前用户 TEMP 下；
-      2) 目录内存在本程序独有的标记文件（打包时放进 datas，见 瞬译_精简.spec）；
+      2) 目录内存在本程序独有的标记文件（打包时放进 datas，见 键译_精简.spec）；
       3) 没有任何在跑的进程从该目录里运行（逐个比进程映像路径前缀）。
     返回成功删除的目录数；任何异常都吞掉（清理失败不影响启动）。
     """

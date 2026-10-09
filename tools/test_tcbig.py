@@ -14,7 +14,7 @@ import sentencepiece            # noqa: E402
 from app import paths                                   # noqa: E402
 from app.engine import MarianTranslator                 # noqa: E402
 
-SRC = os.path.join(os.environ["LOCALAPPDATA"], "ShunYiTest", "tcbig_zh_ja")
+SRC = os.path.join(os.environ["LOCALAPPDATA"], "BoardTransTest", "tcbig_zh_ja")
 DST = os.path.join(paths.packages_dir(), "tcbig_zh_ja")
 
 CASES = [

@@ -53,7 +53,7 @@ def main():
     key = sys.argv[1] if len(sys.argv) > 1 else "zh_en"
     info = models.PACKAGES[key]
     print("=" * 64)
-    print(f"瞬译 · 真实下载进度验证（{info['display']}，{info['size_text']}）")
+    print(f"键译 · 真实下载进度验证（{info['display']}，{info['size_text']}）")
     print("=" * 64)
 
     # 用项目本来就支持的模型目录环境变量把整个模型区挪到临时目录，

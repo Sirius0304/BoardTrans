@@ -54,7 +54,7 @@ def shot_window(disable_text_render: bool):
                 continue
             if not text:
                 continue
-            if text.startswith("瞬译 设置") and "header" not in marks:
+            if text.startswith("键译 设置") and "header" not in marks:
                 marks["header"] = (w.winfo_rootx(), w.winfo_rooty(),
                                    w.winfo_width(), w.winfo_height())
             elif "当前档位实测响应" in text and "note" not in marks:

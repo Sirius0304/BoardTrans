@@ -10,9 +10,9 @@ from app import config, paths          # noqa: E402
 from app.engine import TranslationEngine   # noqa: E402
 
 PROJECT = r"F:\shunyi"
-BACKUP = r"F:\瞬译_备份_20260927"
-RUN = os.path.join(os.environ["LOCALAPPDATA"], "ShunYi")
-EXE = os.path.join(PROJECT, "dist", "瞬译.exe")
+BACKUP = r"F:\键译_备份_20260927"
+RUN = os.path.join(os.environ["LOCALAPPDATA"], "BoardTrans")
+EXE = os.path.join(PROJECT, "dist", "键译.exe")
 
 
 def size_of(path):

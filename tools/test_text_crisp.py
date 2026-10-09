@@ -80,8 +80,8 @@ def main():
     root.tk.call("tk", "scaling", 96 / 72)
     ui.set_scale(1.0)
     fonts = {}
-    for name, pt, weight in (("ShunYiBase", 10, "normal"), ("ShunYiBold", 10, "bold"),
-                             ("ShunYiTitle", 12, "bold"), ("ShunYiSmall", 9, "normal")):
+    for name, pt, weight in (("BoardTransBase", 10, "normal"), ("BoardTransBold", 10, "bold"),
+                             ("BoardTransTitle", 12, "bold"), ("BoardTransSmall", 9, "normal")):
         px = -max(9, int(round(pt * 96 / 72)))
         try:
             root.tk.call("font", "delete", name)
@@ -109,24 +109,24 @@ def main():
           ui.font_file(FAMILY, False) is ui.font_file(FAMILY, False))
 
     print("\n=== B. 尺寸对齐（换了渲染方式也不能挪位）===")
-    spec = ui.font_spec(root, "ShunYiBase")
-    ruler = lambda s: int(root.tk.call("font", "measure", "ShunYiBase", s))    # noqa: E731
+    spec = ui.font_spec(root, "BoardTransBase")
+    ruler = lambda s: int(root.tk.call("font", "measure", "BoardTransBase", s))    # noqa: E731
     data, w, h = ui.text_png(SAMPLE, FAMILY, spec["px"], "normal", "#1F2937",
                              linespace=spec["linespace"], ascent=spec["ascent"],
                              measure=ruler)
     check("能渲染出 PNG 字节", bool(data) and len(data) > 100, f"{len(data)} bytes")
     check("高度 = Tk 的行高 linespace", h == spec["linespace"],
           f"图片 {h} vs linespace {spec['linespace']}")
-    tk_w = int(root.tk.call("font", "measure", "ShunYiBase", SAMPLE))
+    tk_w = int(root.tk.call("font", "measure", "BoardTransBase", SAMPLE))
     check("宽度与 Tk 的 font measure 一致（±1px）", abs(w - tk_w) <= 1,
           f"图片 {w} vs measure {tk_w}")
 
     pairs = []
-    for font_name in ("ShunYiTitle", "ShunYiBase", "ShunYiSmall"):
+    for font_name in ("BoardTransTitle", "BoardTransBase", "BoardTransSmall"):
         nat = tk.Label(root, text=SAMPLE, font=font_name, bg="#FFFFFF", anchor="w")
         tl = ui.TextLabel(root, text=SAMPLE, font=font_name, bg="#FFFFFF", anchor="w")
         pairs.append((font_name, SAMPLE, nat, tl, "单行"))
-    for font_name in ("ShunYiBase", "ShunYiSmall"):
+    for font_name in ("BoardTransBase", "BoardTransSmall"):
         for wrap in (200, 330):
             nat = tk.Label(root, text=LONG, font=font_name, wraplength=wrap,
                            justify="left", anchor="w", bg="#FFFFFF")
@@ -176,11 +176,11 @@ def main():
     check("笔画到位（最深像素接近设定文字色 #1F2937）", darkest <= 80, f"最小灰度={darkest}")
 
     print("\n=== D. TextLabel 的接口兼容（业务代码与既有测试都在用）===")
-    dyn = ui.TextLabel(root, text="状态：待机", font="ShunYiSmall", fg="#6B7280",
+    dyn = ui.TextLabel(root, text="状态：待机", font="BoardTransSmall", fg="#6B7280",
                        bg="#FFFFFF", anchor="w")
     check("cget('text') 返回原文（而不是空）", dyn.cget("text") == "状态：待机",
           dyn.cget("text"))
-    check("cget('font') 返回命名字体名", dyn.cget("font") == "ShunYiSmall",
+    check("cget('font') 返回命名字体名", dyn.cget("font") == "BoardTransSmall",
           str(dyn.cget("font")))
     before = dyn._photo
     dyn.configure(text="状态：正在下载 42%")
@@ -191,14 +191,14 @@ def main():
     p2 = dyn._photo
     dyn.configure(fg="#DC2626")
     check("改 fg 也会重渲染（状态换色要跟着变）", dyn._photo is not p2)
-    empty = ui.TextLabel(root, text="", font="ShunYiSmall", bg="#FFFFFF")
+    empty = ui.TextLabel(root, text="", font="BoardTransSmall", bg="#FFFFFF")
     check("空文本不挂图片（不显示破图）",
           empty.cget("image") == "" and empty.cget("text") == "")
 
     print("\n=== E. 兜底：Pillow / 字体不可用时退回原生渲染 ===")
     ui.HAS_PIL = False
     try:
-        fb = ui.TextLabel(root, text="回退测试 Abc", font="ShunYiSmall", fg="#1F2937",
+        fb = ui.TextLabel(root, text="回退测试 Abc", font="BoardTransSmall", fg="#1F2937",
                           bg="#FFFFFF")
         check("无 Pillow 时回退到原生 Tk 文字（功能不坏）",
               fb.cget("image") == "" and
@@ -210,7 +210,7 @@ def main():
     ui.font_file = lambda family, bold=False: None
     try:
         ui._TEXT_PNG_CACHE.clear()
-        fb2 = ui.TextLabel(root, text="回退测试 Abc", font="ShunYiSmall", fg="#1F2937",
+        fb2 = ui.TextLabel(root, text="回退测试 Abc", font="BoardTransSmall", fg="#1F2937",
                            bg="#FFFFFF")
         check("字体文件找不到时也回退到原生文字",
               fb2.cget("image") == "" and tk.Label.cget(fb2, "text") == "回退测试 Abc")
@@ -236,10 +236,10 @@ def main():
           f"{len(ui._TEXT_PNG_CACHE)} ≤ {ui._TEXT_PNG_CACHE_MAX}")
 
     print("\n=== G. 实屏对比：ClearType vs 超采样（截屏统计彩色像素）===")
-    native = tk.Label(root, text=SAMPLE, font="ShunYiBase", fg="#1F2937", bg="#FFFFFF",
+    native = tk.Label(root, text=SAMPLE, font="BoardTransBase", fg="#1F2937", bg="#FFFFFF",
                       anchor="w", padx=1, pady=1)
     native.pack(anchor="w", padx=10, pady=(10, 2))
-    shot_holder = ui.TextLabel(root, text=SAMPLE, font="ShunYiBase", fg="#1F2937",
+    shot_holder = ui.TextLabel(root, text=SAMPLE, font="BoardTransBase", fg="#1F2937",
                                bg="#FFFFFF", anchor="w")
     shot_holder.pack(anchor="w", padx=10, pady=(2, 10))
     root.update_idletasks()
@@ -292,7 +292,7 @@ def main():
     box = tk.Frame(root, bg="#FFFFFF", width=420, height=90)
     box.pack_propagate(False)          # 固定宽度，用来模拟不同的可用宽度
     box.pack()
-    lbl = ui.TextLabel(box, text=LONG, font="ShunYiBase", fg="#1F2937", bg="#FFFFFF",
+    lbl = ui.TextLabel(box, text=LONG, font="BoardTransBase", fg="#1F2937", bg="#FFFFFF",
                        anchor="w", justify="left", wraplength=200)
     lbl.pack(fill="x")
 

@@ -23,7 +23,7 @@ def pause():
 
 
 print("=" * 60)
-print("  瞬译 引擎自检（exe 环境）")
+print("  键译 引擎自检（exe 环境）")
 print("=" * 60)
 print("  是否打包运行 (frozen):", bool(getattr(sys, "frozen", False)))
 print("  可执行文件:", sys.executable)

@@ -28,7 +28,7 @@ from app.service import HotkeyService         # noqa: E402
 CRISP_CANDIDATES = ("Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", "黑体", "SimHei")
 RESULTS = []
 
-NAMED_CUSTOM = ("ShunYiBase", "ShunYiBold", "ShunYiTitle", "ShunYiSmall", "ShunYiMono")
+NAMED_CUSTOM = ("BoardTransBase", "BoardTransBold", "BoardTransTitle", "BoardTransSmall", "BoardTransMono")
 NAMED_TK = ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkTooltipFont",
             "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont", "TkFixedFont")
 TEXT_CLASSES = {
@@ -182,7 +182,7 @@ def main():
     def _collect():
         data = collect(settings.root)
         data["runtime_family"] = str(
-            settings.root.tk.call("font", "configure", "ShunYiBase", "-family"))
+            settings.root.tk.call("font", "configure", "BoardTransBase", "-family"))
         holder.update(data)
 
     settings._queue.put(("call", _collect))
@@ -214,7 +214,7 @@ def main():
 
     print("\n=== C. 关键文字元素都在核对范围内（防漏项）===")
     texts = [r["text"] for r in rows]
-    must = ["瞬译 设置", "翻译模型", "中译英", "中译日", "目标语言", "英文", "日文",
+    must = ["键译 设置", "翻译模型", "中译英", "中译日", "目标语言", "英文", "日文",
             "翻译档位", "高速度", "高质量", "内存优化", "通知提醒", "快捷键",
             "保存", "取消", "恢复默认设置", "下载", "删除", "录制", "恢复默认"]
     missing = [m for m in must if not any(m in t for t in texts)]

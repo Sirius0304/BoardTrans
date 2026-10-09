@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 - 系统托盘
+键译 - 系统托盘
 
 托盘菜单提供：
 - 目标语言切换（英文 / 日文）
@@ -39,7 +39,7 @@ class TrayApp:
         self.icon = pystray.Icon(
             "shunyi",
             icon.ICON_ENABLED,
-            "瞬译 - 打字即翻译",
+            "键译 - 打字即翻译",
             menu=self._build_menu(),
         )
         # 只注入"实际怎么发"（气泡），不注入"要不要发" ——
@@ -177,4 +177,4 @@ class TrayApp:
 
     def _welcome(self) -> None:
         hotkey = config.get("hotkey")
-        self.notify("瞬译已启动", f"打字后按 {hotkey} 即可翻译；托盘菜单可切换语言与档位。")
+        self.notify("键译已启动", f"打字后按 {hotkey} 即可翻译；托盘菜单可切换语言与档位。")

@@ -21,7 +21,7 @@ for k in ("zh_en", "en_ja"):
 
 print()
 print("=== 清理排查用的临时备份 ===")
-p = r"F:\瞬译_备份_20260927\排查删除问题_zh_en"
+p = r"F:\键译_备份_20260927\排查删除问题_zh_en"
 if os.path.isdir(p):
     size = sum(os.path.getsize(os.path.join(d, f)) for d, _x, fs in os.walk(p) for f in fs)
     shutil.rmtree(p, ignore_errors=True)

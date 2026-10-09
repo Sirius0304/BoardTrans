@@ -25,7 +25,7 @@ from app import models, paths   # noqa: E402
 KEY = "zh_en"
 PKG_DIR = models.model_dir(KEY)
 CACHE_FILE = os.path.join(paths.models_dir(), f"{KEY}.argosmodel")
-BACKUP = r"F:\瞬译_备份_20260927\排查删除问题_zh_en"
+BACKUP = r"F:\键译_备份_20260927\排查删除问题_zh_en"
 
 
 def state(label):

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 · 自检工具
+键译 · 自检工具
 ================
 
 一键检查运行环境是否正常，并给出中文的修复建议。
@@ -245,10 +245,10 @@ def check_sendinput() -> None:
     wc = WNDCLASSW()
     wc.lpfnWndProc = proc
     wc.hInstance = hinst
-    wc.lpszClassName = "ShunYiCheckup"
+    wc.lpszClassName = "BoardTransCheckup"
     user32.RegisterClassW(ctypes.byref(wc))
 
-    hwnd = user32.CreateWindowExW(0, "ShunYiCheckup", "瞬译自检窗口",
+    hwnd = user32.CreateWindowExW(0, "BoardTransCheckup", "键译自检窗口",
                                   WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 420, 140, None, None, hinst, None)
     edit = user32.CreateWindowExW(0, "EDIT", "",
@@ -302,7 +302,7 @@ def check_sendinput() -> None:
 
 def main() -> int:
     print("=" * 62)
-    print("  瞬译 自检工具")
+    print("  键译 自检工具")
     print("=" * 62)
 
     for step in (check_env, check_deps, check_paths, check_models,

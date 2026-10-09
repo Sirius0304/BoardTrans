@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 - 配置模块
+键译 - 配置模块
 
-配置保存在 %LOCALAPPDATA%\\ShunYi\\config.json，用户可以手工编辑。
+配置保存在 %LOCALAPPDATA%\\BoardTrans\\config.json，用户可以手工编辑。
 切换语言 / 档位时程序会把配置原子写回磁盘（先写临时文件再替换），
 因此即使直接关机、程序被强杀，也不会出现"配置文件半截损坏"的情况。
 """
@@ -44,7 +44,7 @@ DEFAULTS: dict = {
     # 释放后再翻译需要重新加载，实测约多花 0.15 秒，几乎无感。默认 15 分钟。
     "idle_unload_minutes": 15,
     # 模型存放位置。留空 = 自动（优先用「软件所在目录\models」，不可用时回退到数据目录）。
-    # 也可填绝对路径自定义，例如 "D:\\ShunYiModels"。
+    # 也可填绝对路径自定义，例如 "D:\\BoardTransModels"。
     # 注意：路径不能含中文 —— sentencepiece 打不开非 ASCII 路径，填了会被自动忽略并回退。
     "models_root": "",
     # 「通知提醒」总开关：控制所有面向用户的提醒（托盘气泡通知）。

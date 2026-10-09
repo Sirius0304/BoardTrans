@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-瞬译 · 精简打包配置
+键译 · 精简打包配置
 ====================
 
 和原来「一条 --collect-all ctranslate2」的区别：
@@ -95,7 +95,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="瞬译",
+    name="键译",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

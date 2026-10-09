@@ -101,10 +101,10 @@ def ui_thread():
     wc = WNDCLASSW()
     wc.lpfnWndProc = _proc_ref
     wc.hInstance = hinst
-    wc.lpszClassName = "ShunYiE2E"
+    wc.lpszClassName = "BoardTransE2E"
     user32.RegisterClassW(ctypes.byref(wc))
 
-    hwnd = user32.CreateWindowExW(0, "ShunYiE2E", "瞬译 端到端测试窗口",
+    hwnd = user32.CreateWindowExW(0, "BoardTransE2E", "键译 端到端测试窗口",
                                   WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 780, 260, None, None, hinst, None)
     edit = user32.CreateWindowExW(0, "EDIT", "",

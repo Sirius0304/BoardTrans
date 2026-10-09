@@ -185,7 +185,7 @@ def main():
     check(f"对话框文字控件齐全（{len(labels)} 个，仅说明文字）", len(labels) == 1, str(len(labels)))
     bad_font = [lb for lb in labels
                 if lb["font"].split()[0] not in (ui.UI_FONT, ui.UI_FONT_BOLD)]
-    check("文字字体与设置界面同源（ShunYiBase / ShunYiBold）", not bad_font, str(bad_font[:2]))
+    check("文字字体与设置界面同源（BoardTransBase / BoardTransBold）", not bad_font, str(bad_font[:2]))
     bad_bg = [lb for lb in labels if lb["bg"] != ui.COLOR_CARD]
     check("文字底为卡片白（#FFFFFF）", not bad_bg, str(bad_bg[:2]))
     check("存在圆角卡片（超采样图片或圆弧绘制）", bool(built.get("card", {}).get("has_rounded_item")),

@@ -181,7 +181,7 @@ def test_shared_instance():
 
 def main():
     print("=" * 62)
-    print("瞬译 · 进度上报层测试")
+    print("键译 · 进度上报层测试")
     print("=" * 62)
     test_three_arg_compat()
     test_finish_reaches_100()

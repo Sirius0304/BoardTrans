@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-瞬译 - 控制台输出辅助
+键译 - 控制台输出辅助
 
 打包成无控制台的 exe 后 sys.stdout 为 None，直接 print 会报错，
 所以统一走 safe_print。

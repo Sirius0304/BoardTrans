@@ -6,11 +6,11 @@ import shutil
 PROJECT = r"F:\shunyi"
 
 print("=== 清理打包临时产物 ===")
-prev = os.path.join(PROJECT, "dist", "瞬译_上一版.exe")
+prev = os.path.join(PROJECT, "dist", "键译_上一版.exe")
 if os.path.exists(prev):
     size = os.path.getsize(prev) / 1024 / 1024
     os.remove(prev)
-    print(f"  已删除 dist/瞬译_上一版.exe ({size:.1f} MB)")
+    print(f"  已删除 dist/键译_上一版.exe ({size:.1f} MB)")
 
 for name in ("build", "build_selftest", "dist_new"):
     d = os.path.join(PROJECT, name)
@@ -22,7 +22,7 @@ for name in ("build", "build_selftest", "dist_new"):
 print()
 print("=== 最终状态 ===")
 # 成品 exe 现在直接放在项目根目录（打包脚本改了输出位置）
-exe = os.path.join(PROJECT, "瞬译.exe")
+exe = os.path.join(PROJECT, "键译.exe")
 print(f"  exe 体积: {os.path.getsize(exe)/1024/1024:.1f} MB")
 print(f"  dist 内容: {os.listdir(os.path.join(PROJECT, 'dist'))}")
 

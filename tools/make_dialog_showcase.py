@@ -83,7 +83,7 @@ def main():
         title_font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 24)
     except Exception:  # noqa: BLE001
         font = title_font = ImageFont.load_default()
-    draw.text((pad + 4, 6), "瞬译 · 弹窗统一为设置界面风格（微软雅黑 / 圆角卡片 / 同套按钮）",
+    draw.text((pad + 4, 6), "键译 · 弹窗统一为设置界面风格（微软雅黑 / 圆角卡片 / 同套按钮）",
               fill="#1F2937", font=title_font)
     for idx, (label, im) in enumerate(shots):
         r, c = divmod(idx, cols)

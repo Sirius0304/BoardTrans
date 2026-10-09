@@ -1,4 +1,4 @@
-# 瞬译 依赖清单
+# 键译 依赖清单
 # 推荐安装命令（阿里云镜像，国内最快）：
 #   .venv\Scripts\python.exe -m pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 #

@@ -1,4 +1,4 @@
-# 瞬译（ShunYi）· 打字即翻译
+# 键译（BoardTrans）· 打字即翻译
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-blue.svg)
@@ -29,7 +29,7 @@
 |---|---|
 | **① 准备环境** | 双击 `0-准备环境.bat`（本机已装好，可跳过） |
 | **② 开始使用** | 双击 `2-托盘版.bat`（首次会自动提示下载模型） |
-| **③ 打包成 exe** | 双击 `3-打包exe.bat` → 得到 `dist\瞬译.exe` |
+| **③ 打包成 exe** | 双击 `3-打包exe.bat` → 得到 `dist\键译.exe` |
 
 **用法**：在记事本/微信/浏览器地址栏里打中文 → 按 `Alt + J` → 原地变译文。
 **设置**：右键托盘图标 →「设置…」→ 管理翻译模型 / 翻译档位 / 快捷键。
@@ -41,7 +41,7 @@
 ## 📁 项目结构
 
 ```
-瞬译\
+键译\
 ├── 0-准备环境.bat          ← 一键安装依赖
 ├── 0-自检.bat              ← 一键体检排障
 ├── 1-控制台版.bat          ← 阶段一：控制台版
@@ -82,7 +82,7 @@
 │   └── 设置界面-阶段四指南.md      ← 设置界面：重新打包 exe
 │
 ├── tools\                  ← 开发/验证用小工具（用户可忽略）
-├── dist\瞬译.exe           ← 打包产物
+├── dist\键译.exe           ← 打包产物
 └── models\                 ← 模型包备份（可选，方便离线部署）
 ```
 
@@ -207,7 +207,7 @@
 
 ```
 MIT License
-Copyright (c) 2026 yz050304 (瞬译 / ShunYi) <yz050304@163.com>
+Copyright (c) 2026 yz050304 (键译 / BoardTrans) <yz050304@163.com>
 ```
 
 > ⚠️ 分发的成品中还包含**第三方组件**，各有独立许可：
