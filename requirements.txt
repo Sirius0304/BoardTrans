@@ -24,5 +24,11 @@ pyperclip==1.11.0
 pystray==0.19.5
 Pillow==12.3.0
 
+# HTTPS 证书校验用的 CA 包（2026-10-11 加）：
+# exe 里不带它时，TLS 校验只能依赖 Windows 系统证书库 —— 遇到公司网络/杀软/代理
+# 做 TLS 中间人，或系统根证书被清理，下载模型会直接 CERTIFICATE_VERIFY_FAILED。
+# 带上之后校验不依赖系统库，这类"莫名下不下来"从根上消失。
+certifi==2026.7.22
+
 # 打包成 exe（阶段三需要）
 pyinstaller==6.22.3

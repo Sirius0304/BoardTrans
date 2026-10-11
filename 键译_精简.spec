@@ -21,7 +21,7 @@
 结果：exe 里的未压缩内容从 132.4 MB 降到约 98 MB。
 """
 
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 PROJECT = r"F:\shunyi"
 
@@ -31,6 +31,7 @@ binaries += collect_dynamic_libs("sentencepiece")
 
 hiddenimports = [
     "pystray._win32",          # 托盘在 Windows 下的后端，PyInstaller 有时分析不到
+    "certifi",                 # HTTPS 证书校验的 CA 包（见 requirements 里的说明）
 ]
 
 excludes = [
@@ -65,7 +66,12 @@ a = Analysis(
     binaries=binaries,
     # app_icon.ico 同时作为「本程序自有标记」放进包内：
     # 启动时据此识别并清理自己遗留的 _MEI* 解包目录（只删带此标记的）
-    datas=[(PROJECT + r"\app_icon.ico", ".")],
+    datas=[
+        (PROJECT + r"\app_icon.ico", "."),
+        # certifi 的 CA 证书包：不带它，exe 里的 TLS 校验只能靠 Windows 系统证书库，
+        # 遇到公司网络/杀软的 TLS 中间人会直接 CERTIFICATE_VERIFY_FAILED（模型下不下来）
+        *collect_data_files("certifi"),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

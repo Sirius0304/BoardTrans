@@ -36,6 +36,10 @@ CHECKS = [
     ("app.paths", "键译", "新中文名"),
     ("app.paths", "migrate_legacy_data", "旧数据目录自动迁移（改名后用户设置不丢）"),
     ("app.settings_window", "BoardTransBase", "新命名字体"),
+    # 2026-10-11 修「单 exe 下载模型失败」
+    ("app.models", "_ensure_parent", "下载前兜底建父目录（根治 Errno 2）"),
+    ("app.models", "_move_dir_contents", "迁移逐项搬、不再删目标目录"),
+    ("app.models", "_ssl_context", "HTTPS 用 certifi 的 CA 包校验"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。

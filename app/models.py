@@ -309,6 +309,47 @@ def installed_size(key: str) -> int:
 
 # ------------------------- 下载 -------------------------
 
+# SSL 上下文缓存：True 表示"已尝试过且不可用"，None 表示尚未尝试。
+_SSL_CTX: list = []
+
+
+def _ssl_context():
+    """HTTPS 证书校验用的 SSL 上下文；拿不到 certifi 时返回 None（用系统证书库）。
+
+    为什么需要它（2026-10-11）：打包成 exe 后，TLS 校验默认依赖 Windows 系统证书库。
+    系统库正常时没问题；但公司网络 / 杀软 / 代理做 TLS 中间人、或系统根证书被清理时，
+    会直接报 CERTIFICATE_VERIFY_FAILED —— 表现就是"模型下不下来"，且原因很难猜。
+    带上 certifi 的 CA 包后，校验不依赖系统库，这类失败从根上消失。
+
+    没有 certifi 也不报错：返回 None，urllib 走默认行为（Windows 系统证书库）。
+    """
+    if _SSL_CTX:
+        return _SSL_CTX[0] or None
+    ctx = None
+    try:
+        import ssl
+
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001
+        ctx = None
+    _SSL_CTX.append(ctx)
+    return ctx
+
+
+def _ensure_parent(dest: str) -> None:
+    """写下载文件前**必须**先确保父目录存在。
+
+    为什么单独抽出来（2026-10-11 报障"单 exe 无法下载模型"）：
+    实测错误是 `[Errno 2] No such file or directory: '.../cache/zh_en.argosmodel'` ——
+    注意 Python 报 Errno 2 时**即使缺的是目录，显示的也是文件路径**，很容易误判成
+    "文件没了"。真实原因是下载目录被别处（模型位置迁移）删掉/换掉后没人重建。
+    这里每次写文件前兜底建一次，成本只有一次 stat，彻底断掉这个竞态。
+    """
+    parent = os.path.dirname(os.path.abspath(dest))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 
 def _probe(url: str, timeout: int = 30):
     """探测文件总大小与是否支持 Range 分块下载。返回 (total_size, supports_range)。
@@ -318,7 +359,7 @@ def _probe(url: str, timeout: int = 30):
     """
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Range": "bytes=0-0"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
             total = None
             content_range = resp.headers.get("Content-Range")      # 形如 bytes 0-0/74481402
             if content_range and "/" in content_range:
@@ -334,7 +375,7 @@ def _probe(url: str, timeout: int = 30):
         pass
     try:
         req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
             cl = resp.headers.get("Content-Length")
             total = int(cl) if cl and cl.isdigit() else None
             accept = (resp.headers.get("Accept-Ranges") or "").lower()
@@ -364,7 +405,9 @@ def _ranged_download(url: str, dest: str, total: int, prog: _Progress, label: st
     if os.path.exists(dest):
         os.remove(dest)                       # 多线程模式不做区间续传，从头下
 
-    # 预分配，保证各线程都能写到自己的位置
+    # 预分配，保证各线程都能写到自己的位置。
+    # 先建父目录：目录被迁移逻辑换掉/删掉时，这里不建就会直接 Errno 2。
+    _ensure_parent(dest)
     with open(dest, "wb") as f:
         f.truncate(total)
 
@@ -396,7 +439,7 @@ def _ranged_download(url: str, dest: str, total: int, prog: _Progress, label: st
         req = urllib.request.Request(url, headers=headers)
         # 用卡顿超时（而不是 urlopen 的 120 秒）——卡死的连接 20 秒没数据就放弃，
         # 交给上层重试这一片，避免"看着像卡住、其实在干等两分钟"
-        with urllib.request.urlopen(req, timeout=min(timeout, STALL_TIMEOUT)) as resp:
+        with urllib.request.urlopen(req, timeout=min(timeout, STALL_TIMEOUT), context=_ssl_context()) as resp:
             if resp.status != 206:
                 raise IOError(f"服务器返回 {resp.status}（不支持分块）")
             f.seek(start)
@@ -495,7 +538,9 @@ def _single_thread_download(url: str, dest: str, prog: _Progress, label: str,
         headers["Range"] = f"bytes={existing}-"
 
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    # 兜底建父目录（同上：目录可能被迁移逻辑换掉）
+    _ensure_parent(dest)
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         # 服务器不支持续传时返回 200，需要从头开始
         if existing > 0 and resp.status != 206:
             existing = 0
@@ -775,6 +820,38 @@ def describe_locations(key: str) -> list[tuple[str, int]]:
     return items
 
 
+def _move_dir_contents(old: str, new: str) -> list[str]:
+    """把 old 里的**内容**逐项搬进 new；同名项跳过，绝不删/覆盖目标。
+
+    为什么不用 `shutil.move(old, new)`（2026-10-11 修）：
+    那个做法要求 new **不存在**，所以旧代码先 `os.rmdir(new)` 把目标删掉再加改名。
+    一旦 new 是"刚被程序建好的空 cache 目录"（下载正准备往里写文件），
+    这一删就把下载目录端掉了 —— 紧接着下载报
+    `[Errno 2] No such file or directory: .../cache/zh_en.argosmodel`
+    （Python 报 Errno 2 时即使缺的是**目录**也显示文件路径，极易误判）。
+    更糟的是：若 rmdir 之后 move 又失败，new 就永久缺失了。
+
+    改为逐项搬后：new 只会被补全，永远不会消失；部分失败也只是少搬几项，
+    下次启动会继续补齐。搬空的 old 顺手删掉，不留空壳。
+    """
+    os.makedirs(new, exist_ok=True)
+    moved: list[str] = []
+    for name in os.listdir(old):
+        src = os.path.join(old, name)
+        dst = os.path.join(new, name)
+        if os.path.exists(dst):
+            continue                      # 目标已有同名项：保留目标，不覆盖
+        shutil.move(src, dst)
+        moved.append(name)
+    if moved:
+        try:
+            if not os.listdir(old):
+                os.rmdir(old)             # 搬空了才删源目录
+        except OSError:
+            pass
+    return moved
+
+
 def migrate_legacy_models() -> list[str]:
     """把旧位置（数据目录下）的模型搬到新的模型根目录，避免用户白白重新下载。
 
@@ -799,20 +876,20 @@ def migrate_legacy_models() -> list[str]:
     ]
     done: list[str] = []
     for old, new in pairs:
-        if not os.path.isdir(old) or os.path.abspath(old) == new:
+        if not os.path.isdir(old):
+            continue
+        old_abs, new_abs = os.path.abspath(old), os.path.abspath(new)
+        # 源与目标同一目录，或互为父子（例如 models_root 就指向数据目录）——
+        # 这种"自己搬自己"必须跳过，否则会把目录搬空甚至搬没。
+        if old_abs == new_abs:
+            continue
+        if new_abs.startswith(old_abs + os.sep) or old_abs.startswith(new_abs + os.sep):
             continue
         try:
-            if os.path.isdir(new) and os.listdir(new):
-                continue               # 新位置已有内容，绝不动它
-            os.makedirs(os.path.dirname(new), exist_ok=True)
-            if os.path.exists(new):
-                try:
-                    os.rmdir(new)      # 目标是空目录，删掉以便直接改名
-                except OSError:
-                    pass
-            shutil.move(old, new)
-            done.append(f"{os.path.basename(old)} → {new}")
-            log.info("模型已从旧位置迁移：%s → %s", old, new)
+            moved = _move_dir_contents(old, new_abs)
+            if moved:
+                done.append(f"{os.path.basename(old)} → {new_abs}")
+                log.info("模型已从旧位置迁移：%s → %s", old, new_abs)
         except Exception:  # noqa: BLE001
             log.exception("迁移模型失败（跳过这一项，不影响继续使用）：%s", old)
     return done

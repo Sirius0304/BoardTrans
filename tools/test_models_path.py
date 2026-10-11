@@ -94,10 +94,16 @@ def main():
         shutil.rmtree(en_dir, ignore_errors=True)
     os.makedirs(en_dir, exist_ok=True)
 
-    # 把现有模型复制过去，模拟"模型放在软件目录下"的情形
-    src_pkg = os.path.join(paths.data_dir(), "packages")
+    # 把现有模型复制过去，模拟"模型放在软件目录下"的情形。
+    # 注意：模型位置早已从「数据目录」迁到「软件目录\models」（paths.packages_dir()），
+    # 旧写法读 data_dir()/packages 在迁移后会是空目录 → 误报"无法识别的布局"（2026-10-11 修）。
+    src_pkg = paths.packages_dir()
+    if not os.path.isdir(src_pkg):
+        src_pkg = os.path.join(paths.data_dir(), "packages")   # 兜底：老布局
     if os.path.isdir(src_pkg):
         shutil.copytree(src_pkg, os.path.join(en_dir, "packages"))
+    else:
+        print(f"  [跳过] 找不到模型包目录: {src_pkg}")
     config.update(models_root=en_dir)
     paths.reset_models_root_cache()
     print(f"  切到: {paths.models_root()}")
