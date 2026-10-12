@@ -260,7 +260,7 @@ class HotkeyService:
         quality = cfg.get("quality", "fast")
 
         # 1) 取词
-        text, how = capture_selected_text(cfg.get("capture_mode", "auto"), int(cfg.get("max_chars", 2000)))
+        text, how = capture_selected_text(cfg.get("capture_mode", "auto"), int(cfg.get("max_chars", 20000)))
         if not text:
             log.info("取词失败: %s", how)
             self._notify("没有取到文字", how)

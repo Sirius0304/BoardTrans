@@ -40,6 +40,12 @@ CHECKS = [
     ("app.models", "_ensure_parent", "下载前兜底建父目录（根治 Errno 2）"),
     ("app.models", "_move_dir_contents", "迁移逐项搬、不再删目标目录"),
     ("app.models", "_ssl_context", "HTTPS 用 certifi 的 CA 包校验"),
+    # 2026-10-12 修「长文本只翻最后一段」「TXT 文件无法翻译」
+    ("app.capture", "_capture_paragraph", "自动取词改为取整段"),
+    ("app.capture", "_copy_selection", "复制选中内容带重试"),
+    ("app.capture", "PARAGRAPH_MAX_LINES", "整段取词的行数上限"),
+    ("app.config", "_migrate_old_defaults", "旧默认值平滑升级"),
+    ("app.config", "20000", "max_chars 新默认值"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。

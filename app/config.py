@@ -31,10 +31,16 @@ DEFAULTS: dict = {
     "inject_mode": "paste",
     # 粘贴回写后是否恢复原剪贴板内容
     "restore_clipboard": True,
-    # 取词方式：auto（先用当前选中，没有则自动选到行首）/ selection（只用当前选中）
+    # 取词方式：
+    #   auto      —— 先用当前选中；没有选中就自动取「光标所在的整段」（推荐）
+    #   selection —— 只用当前选中（没选中就报错，不给兜底）
+    #   line      —— 只取光标到本行行首（适合"只翻这一句"）
     "capture_mode": "auto",
-    # 单次取词的最大字符数，超过则截断（防止误选整篇长文卡住）
-    "max_chars": 2000,
+    # 单次取词的最大字符数，超过则不作翻译（防止误选整篇长文卡住）。
+    # 2026-10-12 由 2000 提高到 20000：2000 会把"一个正常的长段落 / 一个 txt 文件"
+    # 直接拒掉，表现就是"TXT 文件无法翻译"。翻译引擎本身能分段处理长文本，
+    # 这个上限只是为了挡住"误按 Ctrl+A 选中整篇文档"这类误操作。
+    "max_chars": 20000,
     # 模型下载源，"official" 为官方源，也可填自定义镜像前缀
     "download_mirror": "official",
     # CPU 推理线程数，0 = 自动
@@ -57,6 +63,10 @@ DEFAULTS: dict = {
     "notify_enabled": True,
 }
 
+# 旧版本的 max_chars 默认值。仅用于"默认值升级"（见 _migrate_old_defaults）：
+# 磁盘上存着这个值，说明用户从没改过它，可以安全地升到新默认值。
+OLD_MAX_CHARS_DEFAULT = 2000
+
 _lock = threading.RLock()
 _cache: dict | None = None
 # 磁盘上配置文件的"指纹"（mtime_ns, 大小），用于判断别的进程/手工编辑是否改过它
@@ -70,6 +80,27 @@ def _merge(base: dict, override: dict) -> dict:
         if key in result:
             result[key] = value
     return result
+
+
+def _migrate_old_defaults(data: dict, merged: dict) -> bool:
+    """把"旧版本默认值"平滑升级成"新版本默认值"。返回是否需要回写磁盘。
+
+    为什么需要它（2026-10-12）：
+    `_merge` 是"磁盘值优先"——用户配置里一旦存下某个键，**新版本的默认值就永远
+    盖不过它**。max_chars 从 2000 提到 20000 时，老用户配置里存着 2000，
+    于是修复对他们完全不生效（照旧被"内容太长，已跳过"挡掉）。
+
+    规则很保守：**只有当磁盘值恰好等于旧默认值**（说明用户从没自己改过）
+    才升级；用户改过的值一律不动。
+    """
+    changed = False
+    # 注意：这里只能看"磁盘上的原始值"，**不能**再拿 merged 去比对新默认值 ——
+    # merged 的 max_chars 恰恰来自磁盘（= 旧默认值 2000），加那条判断会让迁移
+    # 永远不触发，等于没写。（第一版就是这么写错的，被回归测试抓出来了。）
+    if data.get("max_chars") == OLD_MAX_CHARS_DEFAULT:
+        merged["max_chars"] = DEFAULTS["max_chars"]
+        changed = True
+    return changed
 
 
 def load(force: bool = False) -> dict:
@@ -91,7 +122,13 @@ def load(force: bool = False) -> dict:
                 except OSError:
                     pass
                 data = {}
-        merged = _merge(DEFAULTS, data if isinstance(data, dict) else {})
+        raw = data if isinstance(data, dict) else {}
+        merged = _merge(DEFAULTS, raw)
+        if _migrate_old_defaults(raw, merged):
+            # 磁盘值只是"旧默认值"，就地升级并回写，让新默认立刻生效
+            _cache = merged
+            save(merged)
+            return copy.deepcopy(merged)
         _cache = merged
         if not os.path.exists(path):
             save(merged)
