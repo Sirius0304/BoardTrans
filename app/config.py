@@ -62,8 +62,8 @@ DEFAULTS: dict = {
     # 缺陷的来源。旧键会被自动忽略（_merge 不认识的键不做处理）。
     "notify_enabled": True,
     # 译文长度上限（字符数）。**只限制译文，不影响取词长度**（取词上限是 max_chars）。
-    # 0 = 不限制。取值范围 0~1000，越界值会被夹紧（见 clamp_translate_chars）。
-    # 2026-10-13 新增：让用户能自己控制译文别太长。
+    # 0 = **不翻译**（2026-10-13 起，按主人要求从"不限制"改为此语义）；
+    # 1000 = 允许的最大值。越界值会被夹紧（见 clamp_translate_chars）。
     "max_translate_chars": 1000,
 }
 
@@ -83,13 +83,13 @@ def clamp_translate_chars(value) -> int:
     config.json**，界面上的控件管不到那种输入。这里兜一次，
     无论从哪个入口进来，拿到的都是合法值。
 
-    边界行为：
-      0      → 0   （合法值本身，语义是"不限制"）
-      1000   → 1000（合法值本身）
-      -5     → 0   （负值当 0，即不限制；而不是当默认值，避免"设了却不生效"的困惑）
-      5000   → 1000（超上限夹到 1000）
-      "abc"  → 默认值 1000
-      None   → 默认值 1000
+    边界行为（2026-10-13 起，0 的语义是「不翻译」）：
+      0        → 0        （合法值本身，语义是"不翻译"）
+      1000     → 1000     （合法值本身，上限端点）
+      -5       → 默认值   （**故意不映射到 0**：0 现在等于停用翻译，
+                           把笔误的负数也变成 0，会让人以为功能坏了）
+      5000     → 1000     （超上限夹到 1000）
+      "abc"/None/"" → 默认值 1000
     """
     default = int(DEFAULTS["max_translate_chars"])
     try:
@@ -97,7 +97,7 @@ def clamp_translate_chars(value) -> int:
     except (TypeError, ValueError):
         return default
     if n < TRANSLATE_CHARS_MIN:
-        return TRANSLATE_CHARS_MIN
+        return default            # 负值回退默认值，理由见上
     if n > TRANSLATE_CHARS_MAX:
         return TRANSLATE_CHARS_MAX
     return n

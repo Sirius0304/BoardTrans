@@ -918,7 +918,7 @@ class SettingsWindow:
     def _build_length_section(self, parent) -> None:
         """翻译字数上限：控制**译文**最多多少字（不影响取词长度）。
 
-        取值 0~1000：0 = 不限制，1000 = 允许的最大值。
+        取值 0~1000：**0 = 不翻译**，1000 = 允许的最大值。
         校验分两层：界面层（只能输数字 + 提交时夹紧）与配置层
         （config.clamp_translate_chars，兜住手工编辑 config.json 的情况）。
         """
@@ -943,7 +943,7 @@ class SettingsWindow:
         self._limit_spin.bind("<FocusOut>", self._on_limit_commit)
         self._limit_spin.bind("<Return>", self._on_limit_commit)
 
-        ui.TextLabel(row, text="字（0 = 不限制）", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
+        ui.TextLabel(row, text="字（0 = 不翻译）", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
                      font="BoardTransSmall").pack(side="left")
 
         self._limit_hint = ui.TextLabel(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
@@ -981,7 +981,8 @@ class SettingsWindow:
     def _update_limit_hint(self) -> None:
         n = self._limit_value()
         if n == 0:
-            text = "当前：不限制，译文有多长就输出多长。"
+            text = ("当前：不翻译。按快捷键不会有任何变化，原文也不会被改动。"
+                    "想恢复翻译，请把它改成 1 以上的值。")
         elif n <= 100:
             text = (f"当前：译文超过 {n} 字会被截断（以 … 结尾）。"
                     f"适合只想要短句/摘要式输出的场景。")

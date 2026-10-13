@@ -62,6 +62,24 @@ JA_MIN_BEAM = 3
 TRUNCATION_MARK = "…"
 
 
+def normalize_limit(max_chars) -> int | None:
+    """把"译文长度上限"的入参归一化。
+
+    None    → 不限制（默认语义，保持既有调用方行为不变）
+    0       → 0，表示**不翻译**（2026-10-13 按主人要求改的语义）
+    >0      → 原值，表示上限
+    <0      → None（当不限制）。**故意不把负数映射到 0**：0 现在等于"停用翻译"，
+              把笔误的 -5 也变成 0，会让人以为功能坏了。
+    """
+    if max_chars is None:
+        return None
+    try:
+        n = int(max_chars)
+    except (TypeError, ValueError):
+        return None
+    return None if n < 0 else n
+
+
 def ellipsize(text: str, limit: int) -> str:
     """把文本压到 limit 个字符以内；超出部分用省略号代替。
 
@@ -226,19 +244,22 @@ class MarianTranslator:
         return text.strip()
 
     def translate_text(self, text: str, beam_size: int = 1, length_penalty: float = 1.0,
-                       joiner: str = " ", max_chars: int = 0) -> str:
+                       joiner: str = " ", max_chars: int | None = None) -> str:
         """整段翻译：内部按句切分后逐句翻译，再用 joiner 拼回。
 
         joiner 对英文用空格，对日文用空串（日文句子之间不需要空格）。
-        max_chars 是**译文长度上限（字符数）**，0 表示不限制；超限时按
-        _translate_capped 的规则截断并补省略号。默认 0 是为了不让
-        直接调用 MarianTranslator 的老代码/测试行为改变。
+        max_chars 是**译文长度上限（字符数）**：
+          None  → 不限制（默认，保持既有调用方行为不变）
+          0     → **不翻译**，直接返回空串（2026-10-13 起的语义）
+          >0    → 超限时按 _translate_capped 的规则截断并补省略号
         """
         sentences = split_sentences(text)
         if not sentences:
             return ""
-        limit = max(0, int(max_chars or 0))
+        limit = normalize_limit(max_chars)
         if limit == 0:
+            return ""                      # 0 = 不翻译
+        if limit is None:
             if len(sentences) == 1:
                 return self.translate(sentences[0], beam_size=beam_size, length_penalty=length_penalty)
             parts = [self.translate(s, beam_size=beam_size, length_penalty=length_penalty)
@@ -331,21 +352,24 @@ class TranslationEngine:
     # ---------- 翻译 ----------
 
     def translate(self, text: str, target_lang: str = "en", quality: str = "fast",
-                  max_chars: int = 0) -> str:
+                  max_chars: int | None = None) -> str:
         """把中文文本翻译成目标语言，返回译文。
 
         fast    : zh->en 直连（beam=1）；zh->ja 走 zh->en->ja 中转，第二段 beam 有下限
         quality : zh->en 直连（beam=8 + 长度惩罚）；zh->ja 中转两段都用大 beam
-        max_chars: 译文长度上限（字符），0 = 不限制。**只约束最终译文**，
+        max_chars: 译文长度上限（字符）。**只约束最终译文**，
                   日文方向的中转英文不受此限（否则会把中转结果也砍短，译文更残）。
+                  None = 不限制；**0 = 不翻译**（直接返回空串）。
         """
+        if normalize_limit(max_chars) == 0:
+            return ""                      # 0 = 不翻译
         text = (text or "").strip()
         if not text:
             return ""
         target_lang = target_lang if target_lang in SUPPORTED_TARGETS else "en"
         quality = quality if quality in PRESETS else "fast"
         preset = PRESETS[quality]
-        limit = max(0, int(max_chars or 0))
+        limit = normalize_limit(max_chars)
         t0 = time.time()
 
         if target_lang == "en":
@@ -366,7 +390,7 @@ class TranslationEngine:
         }
         return result
 
-    def _translate_to_ja(self, text: str, preset: dict, max_chars: int = 0):
+    def _translate_to_ja(self, text: str, preset: dict, max_chars: int | None = None):
         """中文 -> 日文：经英文中转（zh->en->ja）。
 
         说明：Argos 官方索引里没有中→日直连包，只有 zh->en 与 en->ja，
@@ -384,7 +408,7 @@ class TranslationEngine:
         # 第二段 beam 有下限：实测 beam=1 时英文->日文会出现严重错译
         ja_beam = max(preset["beam_size"], JA_MIN_BEAM)
         japanese = en_ja.translate_text(english, beam_size=ja_beam, length_penalty=1.0,
-                                        joiner="", max_chars=max(0, int(max_chars or 0)))
+                                        joiner="", max_chars=normalize_limit(max_chars))
         return japanese, f"zh->en->ja(中转, beam={preset['beam_size']}/{ja_beam})"
 
     def route_preview(self, target_lang: str, quality: str) -> str:

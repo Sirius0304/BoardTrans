@@ -41,9 +41,9 @@ def main():
     # ---------- 1. 配置层边界 ----------
     print("\n[1] 配置层：clamp_translate_chars 的边界行为")
     cases = [
-        (0, 0, "0 本身合法（=不限制）"),
+        (0, 0, "0 本身合法（=不翻译）"),
         (1000, 1000, "1000 本身合法（上限端点）"),
-        (-5, 0, "负数夹到 0"),
+        (-5, 1000, "负数回退默认值（**不**映射到 0，否则等于误停用翻译）"),
         (5000, 1000, "超上限夹到 1000"),
         ("300", 300, "数字字符串可解析"),
         ("abc", 1000, "非数字回退默认值"),
@@ -68,8 +68,8 @@ def main():
     print("\n[3] 引擎层：上限真的作用于译文（核心）")
     eng = engine_mod.TranslationEngine()
 
-    full = eng.translate(LONG_ZH, "en", "fast", max_chars=0)
-    check("上限 0 = 不限制，拿到完整译文", len(full) > 200, f"{len(full)} 字")
+    full = eng.translate(LONG_ZH, "en", "fast", max_chars=None)
+    check("不限制（None）时拿到完整译文", len(full) > 200, f"{len(full)} 字")
 
     for limit in (60, 120, 300):
         out = eng.translate(LONG_ZH, "en", "fast", max_chars=limit)
@@ -80,6 +80,12 @@ def main():
     big = eng.translate(LONG_ZH, "en", "fast", max_chars=100000)
     check("上限远大于自然长度时不多加省略号", not big.endswith("…"), f"{len(big)} 字")
 
+    none = eng.translate(LONG_ZH, "en", "fast", max_chars=0)
+    check("上限 0 = 不翻译，返回空串", none == "", repr(none[:30]))
+    none_ja = eng.translate(LONG_ZH, "ja", "fast", max_chars=0)
+    check("上限 0 时日文方向同样不翻译", none_ja == "", repr(none_ja[:30]))
+    check("None 与不传参数等价（都不限制）",
+          eng.translate("你好。", "en", "fast") == eng.translate("你好。", "en", "fast", max_chars=None))
     tiny = eng.translate(LONG_ZH, "en", "fast", max_chars=1)
     check("上限 1 时输出就是省略号（仍是合法长度）", len(tiny) <= 1, repr(tiny))
 
@@ -92,8 +98,8 @@ def main():
     ja = eng.translate(LONG_ZH, "ja", "fast", max_chars=120)
     check("中日方向：日文译文不超过 120 字", len(ja) <= 120, f"实际 {len(ja)} 字")
     check("中日方向：被截断时有省略号", ja.endswith("…"), repr(ja[-10:]))
-    ja_full = eng.translate(LONG_ZH, "ja", "fast", max_chars=0)
-    check("中日方向：上限 0 时完整", len(ja_full) > len(ja), f"{len(ja_full)} vs {len(ja)}")
+    ja_full = eng.translate(LONG_ZH, "ja", "fast", max_chars=None)
+    check("中日方向：不限制时完整", len(ja_full) > len(ja), f"{len(ja_full)} vs {len(ja)}")
 
     # ---------- 5. 装配层 ----------
     print("\n[5] 装配层：service 真的把配置值传进引擎")
@@ -103,6 +109,13 @@ def main():
     check("service 读取 max_translate_chars", "max_translate_chars" in src)
     check("service 把它传给 engine.translate", "max_chars=limit" in src)
     check("service 用 clamp 夹过一次", "clamp_translate_chars" in src)
+    # 0 = 不翻译的判断必须排在取词之前：取词成功后会先删原文，
+    # 等翻译那步再跳过就等于"原文没了、译文也没有"
+    i_limit = src.find("if limit == 0:")
+    i_capture = src.find("capture_selected_text(")
+    check("service 里 0 的判断在取词之前（否则会丢原文）",
+          i_limit != -1 and i_capture != -1 and i_limit < i_capture,
+          f"limit@{i_limit} < capture@{i_capture} = {i_limit < i_capture}")
 
     print("\n[6] 配置层：手工写越界值会被 load 夹紧")
     r = _probe_config('{"max_translate_chars": 5000}')
