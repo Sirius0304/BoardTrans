@@ -78,6 +78,11 @@ def main():
         holder["action_text"] = {k: v["action"].cget("text") for k, v in settings._model_ui.items()}
         holder["visible"] = settings.root.state()
         holder["title"] = settings.root.title()
+        # 翻译字数上限控件：范围与步长都要从**真实控件**上读，
+        # 而不是看源码字符串（源码级断言会在重构时骗人）
+        holder["limit_min"] = settings._limit_spin.cget("from")
+        holder["limit_max"] = settings._limit_spin.cget("to")
+        holder["limit_step"] = settings._limit_spin.cget("increment")
 
     settings._queue.put(("call", inspect_ui))
     time.sleep(0.8)
@@ -87,6 +92,11 @@ def main():
     check("模型卡片齐全（两个）", sorted(holder.get("model_keys", [])) == ["en_ja", "zh_en"],
           str(holder.get("model_keys")))
     check("窗口处于可见状态", holder.get("visible") == "normal", str(holder.get("visible")))
+    check("翻译字数上限范围是 0~1000",
+          holder.get("limit_min") == 0 and holder.get("limit_max") == 1000,
+          f"from={holder.get('limit_min')} to={holder.get('limit_max')}")
+    check("翻译字数上限每次只增减 1（步长非 1 会一下跳 50）",
+          holder.get("limit_step") == 1, f"increment={holder.get('limit_step')}")
     print(f"       模型状态显示：{holder.get('model_status')}")
     print(f"       按钮文字：{holder.get('action_text')}")
     check("已安装模型显示为「删除」",

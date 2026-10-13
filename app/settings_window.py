@@ -932,7 +932,7 @@ class SettingsWindow:
         self._limit_var = tk.StringVar(master=self.root, value="1000")
         self._limit_spin = ttk.Spinbox(
             row, from_=config.TRANSLATE_CHARS_MIN, to=config.TRANSLATE_CHARS_MAX,
-            increment=50, width=6, textvariable=self._limit_var,
+            increment=1, width=6, textvariable=self._limit_var,
             command=self._on_limit_spin, style="Limit.TSpinbox", justify="right",
         )
         self._limit_spin.pack(side="left", padx=(6, 4))
