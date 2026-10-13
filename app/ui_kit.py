@@ -370,6 +370,12 @@ def _draw_icon_image(kind, s, tint, color, radius):
         line(X(6), Y(-1), X(6), Y(4))
         line(X(-7), Y(4), X(7), Y(4))
         draw.ellipse([X(-1.6) * ss, Y(6) * ss, X(1.6) * ss, Y(9) * ss], fill=color)
+    elif kind == "ruler":                         # 尺子（译文长度上限，2026-10-13 新增）
+        line(X(-8), Y(1), X(8), Y(1))             # 主尺
+        line(X(-8), Y(-3), X(-8), Y(4))           # 左端挡
+        line(X(8), Y(-3), X(8), Y(4))             # 右端挡
+        for off in (-4, 0, 4):                    # 中间刻度
+            line(X(off), Y(1), X(off), Y(-2))
     return img.resize((int(s), int(s)), Image.BOX)
 
 

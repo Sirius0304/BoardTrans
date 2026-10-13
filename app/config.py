@@ -61,11 +61,47 @@ DEFAULTS: dict = {
     # "下载完成用弹窗还是用气泡"，不是"是否提醒"，是"关掉开关仍被提醒"这一
     # 缺陷的来源。旧键会被自动忽略（_merge 不认识的键不做处理）。
     "notify_enabled": True,
+    # 译文长度上限（字符数）。**只限制译文，不影响取词长度**（取词上限是 max_chars）。
+    # 0 = 不限制。取值范围 0~1000，越界值会被夹紧（见 clamp_translate_chars）。
+    # 2026-10-13 新增：让用户能自己控制译文别太长。
+    "max_translate_chars": 1000,
 }
 
 # 旧版本的 max_chars 默认值。仅用于"默认值升级"（见 _migrate_old_defaults）：
 # 磁盘上存着这个值，说明用户从没改过它，可以安全地升到新默认值。
 OLD_MAX_CHARS_DEFAULT = 2000
+
+# 译文长度上限的合法区间（含端点）。0 = 不限制，1000 = 允许的最大值。
+TRANSLATE_CHARS_MIN = 0
+TRANSLATE_CHARS_MAX = 1000
+
+
+def clamp_translate_chars(value) -> int:
+    """把「译文长度上限」夹紧到 0~1000；无法解析时回退默认值。
+
+    为什么在配置层就夹（而不是只在界面里校验）：用户完全可以**手工编辑
+    config.json**，界面上的控件管不到那种输入。这里兜一次，
+    无论从哪个入口进来，拿到的都是合法值。
+
+    边界行为：
+      0      → 0   （合法值本身，语义是"不限制"）
+      1000   → 1000（合法值本身）
+      -5     → 0   （负值当 0，即不限制；而不是当默认值，避免"设了却不生效"的困惑）
+      5000   → 1000（超上限夹到 1000）
+      "abc"  → 默认值 1000
+      None   → 默认值 1000
+    """
+    default = int(DEFAULTS["max_translate_chars"])
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    if n < TRANSLATE_CHARS_MIN:
+        return TRANSLATE_CHARS_MIN
+    if n > TRANSLATE_CHARS_MAX:
+        return TRANSLATE_CHARS_MAX
+    return n
+
 
 _lock = threading.RLock()
 _cache: dict | None = None
@@ -124,6 +160,8 @@ def load(force: bool = False) -> dict:
                 data = {}
         raw = data if isinstance(data, dict) else {}
         merged = _merge(DEFAULTS, raw)
+        # 译文长度上限：不管从界面还是手工编辑 config.json 进来，都夹到合法区间
+        merged["max_translate_chars"] = clamp_translate_chars(merged.get("max_translate_chars"))
         if _migrate_old_defaults(raw, merged):
             # 磁盘值只是"旧默认值"，就地升级并回写，让新默认立刻生效
             _cache = merged
@@ -131,6 +169,9 @@ def load(force: bool = False) -> dict:
             return copy.deepcopy(merged)
         _cache = merged
         if not os.path.exists(path):
+            save(merged)
+        elif raw.get("max_translate_chars") != merged["max_translate_chars"]:
+            # 用户手写了越界值：夹紧后回写一次，让配置与真实行为一致（之后不再触发）
             save(merged)
         return copy.deepcopy(merged)
 

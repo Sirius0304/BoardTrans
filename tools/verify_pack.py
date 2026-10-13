@@ -46,6 +46,12 @@ CHECKS = [
     ("app.capture", "PARAGRAPH_MAX_LINES", "整段取词的行数上限"),
     ("app.config", "_migrate_old_defaults", "旧默认值平滑升级"),
     ("app.config", "20000", "max_chars 新默认值"),
+    # 2026-10-13 新增「翻译字数上限」
+    ("app.config", "clamp_translate_chars", "译文上限的边界夹紧"),
+    ("app.engine", "_translate_capped", "译文上限真正作用于译文"),
+    ("app.engine", "TRUNCATION_MARK", "截断时的省略号标记"),
+    ("app.settings_window", "_build_length_section", "翻译字数上限设置卡片"),
+    ("app.settings_window", "_validate_limit", "数字输入校验"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。

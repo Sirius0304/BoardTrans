@@ -279,7 +279,10 @@ class HotkeyService:
         # 3) 翻译
         engine = self._get_engine()
         t0 = time.time()
-        result = engine.translate(text, target, quality)
+        # 译文长度上限：0 = 不限制。这里必须**真的传进引擎**，
+        # 光存进配置不算生效（2026-10-13 的需求要点）。
+        limit = config.clamp_translate_chars(cfg.get("max_translate_chars", 1000))
+        result = engine.translate(text, target, quality, max_chars=limit)
         cost = time.time() - t0
         if not result:
             self._notify("翻译结果为空", "请重试或换个说法")
@@ -291,8 +294,11 @@ class HotkeyService:
         self.last_result = {
             "source": text, "target": result, "lang": target,
             "quality": quality, "seconds": round(cost, 3), "route": engine.last_stats.get("route", ""),
+            "max_translate_chars": limit,
         }
-        log.info("完成 %.2fs %s -> %s | %s | %s", cost, text[:30], result[:30], way, engine.last_stats)
+        log.info("完成 %.2fs %s -> %s | %s | %s | 译文上限 %d 字%s",
+                 cost, text[:30], result[:30], way, engine.last_stats,
+                 limit, "（不限制）" if limit == 0 else "")
         self._notify(
             f"已翻译成{'英文' if target == 'en' else '日文'}（{cost:.2f}s）",
             result[:80],
