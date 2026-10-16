@@ -140,6 +140,7 @@ class HotkeyService:
         self.last_result: dict = {}
         self._busy = threading.Event()          # 防止连按触发多重翻译
         self._last_activity = time.time()       # 最近一次翻译的时间，用于空闲释放判定
+        self._hotkey_at = 0.0                   # 最近一次按下快捷键的时刻（统计延迟用）
         self._idle_check_interval = 20          # 空闲检查周期（秒）；测试时可改小
         # 打开设置窗口的入口（由主程序注入；缺模型时用它把用户直接引到设置界面）
         self.settings_launcher: Callable[[], None] | None = None
@@ -224,6 +225,7 @@ class HotkeyService:
         try:
             if self._busy.is_set():
                 return                    # 上一次还没处理完，忽略这次按键
+            self._hotkey_at = time.time()  # 记下按键时刻，用于统计"按键→取词/回写"耗时
             self._jobs.put_nowait("translate")
         except Exception:  # noqa: BLE001
             log.error("热键回调异常（已忽略）")
@@ -259,12 +261,24 @@ class HotkeyService:
         target = cfg.get("target_lang", "en")
         quality = cfg.get("quality", "fast")
 
+        # 0) 模型预热：与取词并行（2026-10-16 方案②）。
+        # 必须放在取词**之前** —— 取词那 0.3~0.4 秒正好用来后台读模型，
+        # 取完词翻译时模型已就绪，不用再串行等加载。
+        self._warmup_engine_async()
+
         # 1) 取词
-        text, how = capture_selected_text(cfg.get("capture_mode", "auto"), int(cfg.get("max_chars", 20000)))
+        # probe_ms：判断"用户是否已选中"的窗口（默认 150ms，见 config.py）。
+        # 短窗口让常态（没选区）按键后几乎立刻开始选字。
+        text, how = capture_selected_text(
+            cfg.get("capture_mode", "auto"),
+            int(cfg.get("max_chars", 20000)),
+            probe_ms=int(cfg.get("selection_probe_ms", 150) or 150))
         if not text:
-            log.info("取词失败: %s", how)
+            log.info("取词失败: %s（按键后 %.3fs）", how, self._since_hotkey())
             self._notify("没有取到文字", how)
             return
+        log.info("取词成功(%s): %s | 按键后 %.3fs 完成取词",
+                 how, text[:60], self._since_hotkey())
         log.info("取词成功(%s): %s", how, text[:60])
 
         # 2) 模型就绪检查（缺失则引导用户到设置窗口下载，而不是报错或静默失败）
@@ -292,7 +306,8 @@ class HotkeyService:
 
         # 4) 回写
         way = inject_text(result, cfg.get("inject_mode", "paste"), bool(cfg.get("restore_clipboard", True)))
-        log.info("回写完成（方式=%s, %d 字）", way, len(result))
+        log.info("回写完成（方式=%s, %d 字）| 按键后总共 %.3fs", way, len(result),
+                 self._since_hotkey())
 
         self.last_result = {
             "source": text, "target": result, "lang": target,
@@ -321,13 +336,39 @@ class HotkeyService:
             return
         try:
             engine = self._get_engine()
-            engine.load_model("zh_en")
-            if target == "ja":
-                engine.load_model("en_ja")
+            engine.ensure_loaded(target)
             self._last_activity = time.time()      # 刚预加载完，从这一刻开始算空闲
             log.info("模型预加载完成: %s", target)
         except Exception:  # noqa: BLE001
             log.exception("模型预加载失败")
+
+    def _warmup_engine_async(self) -> None:
+        """按键后立刻在后台把目标语言模型读进内存，**与取词并行**（2026-10-16 方案②）。
+
+        为什么值得做：取词本身要 0.3~0.4 秒（150ms 探测 + 整段选取），而模型
+        加载/空闲释放后的重载要 0.15~3 秒。过去这一段是串行的（先取词 → 再加载
+        → 再翻译），用户感受到的就是"字选完了还不动"。
+        现在把加载丢到后台线程：等取词结束时模型通常已经就绪。
+        已加载（is_ready_for）时不惊动线程，零成本。
+        """
+        try:
+            engine = self._get_engine()
+            target = self.cfg.get("target_lang", "en")
+            if engine.is_ready_for(target):
+                return
+            threading.Thread(target=self._warmup_job, args=(target,),
+                             name="shunyi-warmup", daemon=True).start()
+        except Exception:  # noqa: BLE001
+            log.exception("启动模型预热失败（忽略，翻译时仍会自行加载）")
+
+    def _warmup_job(self, target: str) -> None:
+        try:
+            t0 = time.time()
+            self._get_engine().ensure_loaded(target)
+            self._last_activity = time.time()
+            log.info("模型预热完成（%.3fs，与取词并行）", time.time() - t0)
+        except Exception:  # noqa: BLE001
+            log.exception("模型预热失败（忽略，翻译时仍会自行加载）")
 
     def _background_preload(self) -> None:
         time.sleep(0.5)
@@ -356,6 +397,10 @@ class HotkeyService:
                     log.info("空闲 %.0f 分钟，已释放模型占用的内存（下次翻译会自动重新加载）", idle / 60)
             except Exception:  # noqa: BLE001
                 log.exception("空闲释放检查出错（已忽略）")
+
+    def _since_hotkey(self) -> float:
+        """距最近一次按下快捷键过了多少秒（非热键触发时返回 0，避免日志出现天文数字）。"""
+        return (time.time() - self._hotkey_at) if self._hotkey_at else 0.0
 
     def _open_settings(self) -> None:
         """打开设置窗口（由主程序注入入口；未注入时给出文字指引）。"""

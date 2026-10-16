@@ -42,7 +42,12 @@ CHECKS = [
     ("app.models", "_ssl_context", "HTTPS 用 certifi 的 CA 包校验"),
     # 2026-10-12 修「长文本只翻最后一段」「TXT 文件无法翻译」
     ("app.capture", "_capture_paragraph", "自动取词改为取整段"),
+    ("app.capture", "PARAGRAPH_EXTEND_KEY", "一键扩段（Ctrl+Shift+Up）"),
+    ("app.capture", "SELECTION_PROBE_TIMEOUT", "选区快速探测窗口（150ms）"),
+    ("app.capture", "clipboard_seq", "剪贴板序列号零成本判定"),
     ("app.capture", "_copy_selection", "复制选中内容带重试"),
+    ("app.engine", "ensure_loaded", "模型预热接口（与取词并行）"),
+    ("app.service", "_warmup_engine_async", "按键后后台预热模型"),
     ("app.capture", "PARAGRAPH_MAX_LINES", "整段取词的行数上限"),
     ("app.config", "_migrate_old_defaults", "旧默认值平滑升级"),
     ("app.config", "20000", "max_chars 新默认值"),

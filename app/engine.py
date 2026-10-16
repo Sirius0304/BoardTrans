@@ -275,6 +275,26 @@ class TranslationEngine:
         with self._lock:
             return list(self._models.keys())
 
+    @staticmethod
+    def keys_for(target_lang: str) -> list[str]:
+        """目标语言需要哪些模型（中→日要经英文中转，所以是两个）。"""
+        return ["zh_en"] if target_lang == "en" else ["zh_en", "en_ja"]
+
+    def is_ready_for(self, target_lang: str) -> bool:
+        """目标语言的模型是否**都已经在内存里**（只读字典，秒回，不碰磁盘）。"""
+        return all(key in self._models for key in self.keys_for(target_lang))
+
+    def ensure_loaded(self, target_lang: str) -> None:
+        """把目标语言需要的模型读进内存；已加载的会立即返回。
+
+        设计用途是"与取词并行"（2026-10-16 提速方案②）：按键后立刻在后台线程
+        调用它，等取词（探测 150ms + 整段选取约 200ms）结束时模型通常已就绪，
+        翻译阶段就不必再串行等待 0.15~3 秒的加载/重载。
+        线程安全：load_model 内部持锁，与工作线程的翻译调用不会重复加载。
+        """
+        for key in self.keys_for(target_lang):
+            self.load_model(key)
+
     # ---------- 翻译 ----------
 
     def translate(self, text: str, target_lang: str = "en", quality: str = "fast") -> str:
