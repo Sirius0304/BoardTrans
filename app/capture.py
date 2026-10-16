@@ -43,6 +43,15 @@ POLL_INTERVAL = 0.01
 COPY_TIMEOUT = 1.2
 COPY_ATTEMPTS = 2
 
+# 重试前的额外等待（2026-10-14 游戏场景修复）：
+# 热键是 Alt+J 时，回调触发瞬间用户的 Alt 往往还**物理按着**。
+# 普通程序里 release_modifiers 注入的"抬起"事件能立刻清掉系统修饰键状态，
+# 但游戏（尤其反作弊环境）常按帧轮询输入、甚至忽略注入的抬起事件——
+# 结果紧跟着发出的 Ctrl+C 在游戏看来是 Ctrl+Alt+C，复制不生效。
+# 第一次尝试保持快速（不拖累普通场景）；失败后重试前多等这一段，
+# 给手指足够时间物理松开 Alt。
+COPY_RETRY_SETTLE = 0.25
+
 # 自动取词时最多向上扩多少行（只影响"整段"取词）。
 # 每多扩一行要多一次"复制 + 等剪贴板"（约 60~70ms），所以这个上限同时是
 # "最坏情况下的额外延迟"：25 行 ≈ 1.7s。主流的单行输入只会多试一次就退出。
@@ -98,6 +107,8 @@ def _wait_for_clipboard_change(sentinel: str, timeout: float = COPY_TIMEOUT) -> 
         if current and current != sentinel:
             return current
         time.sleep(POLL_INTERVAL)
+    # 超时说明 Ctrl+C 没被目标程序消费（游戏里常见：注入键被忽略/被当成组合键）。
+    log.info("复制超时：Ctrl+C 后剪贴板没有变化（目标程序可能忽略了注入的按键）")
     return ""
 
 
@@ -117,6 +128,9 @@ def _copy_selection(sentinel: str) -> str:
     多等一次 + 多试一次，成本极低，却能消掉整类偶发失败。
     """
     for attempt in range(COPY_ATTEMPTS):
+        if attempt:
+            # 重试前等手指物理松开修饰键（见 COPY_RETRY_SETTLE 注释）。
+            time.sleep(COPY_RETRY_SETTLE)
         text = _copy_once(sentinel)
         if text:
             return text
@@ -177,6 +191,7 @@ def capture_selected_text(mode: str = "auto", max_chars: int = 2000) -> tuple[st
 
     try:
         release_modifiers()
+        log.info("开始取词（mode=%s）", mode)
 
         # --- 第一步：用户已经选中了文字，Ctrl+C 就能拿到（最准，优先）---
         if mode in ("auto", "selection"):
@@ -189,6 +204,8 @@ def capture_selected_text(mode: str = "auto", max_chars: int = 2000) -> tuple[st
 
         # --- 第二步：没选中就自动取「光标所在的整段」---
         # 旧实现这里只发 shift+home（只选本行），多行长文本于是只翻到最后一行。
+        if mode == "auto":
+            log.info("用户未选中（或复制失败），降级为自动选中整段")
         if mode == "line":
             keyboard.send("shift+home")
             time.sleep(0.05)
@@ -225,6 +242,7 @@ def _post_process(text: str, source: str, max_chars: int, sentinel: str, backup:
     # 删掉刚被选中的原文，光标留在原位，等着接收译文
     keyboard.send("delete")
     time.sleep(0.03)
+    log.info("已发送 Delete 删除原文，取词环节完成（source=%s, %d 字）", source, len(text))
     label = {"selection": "已选中内容",
              "paragraph": "自动选中本段",
              "line": "自动选中本行"}.get(source, "自动取词")

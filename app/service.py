@@ -297,11 +297,17 @@ class HotkeyService:
         result = engine.translate(text, target, quality, max_chars=limit)
         cost = time.time() - t0
         if not result:
-            self._notify("翻译结果为空", "请重试或换个说法")
+            # 兜底（2026-10-14）：取词成功后原文已被 Delete 删掉，
+            # 若翻译为空就一走了之，用户的输入就永久丢了 —— 必须把原文贴回去。
+            self._notify("翻译结果为空", "已把原文放回原处，请重试或换个说法")
+            inject_text(text, cfg.get("inject_mode", "paste"),
+                        bool(cfg.get("restore_clipboard", True)))
+            log.info("翻译结果为空，已回注原文（%d 字）", len(text))
             return
 
         # 4) 回写
         way = inject_text(result, cfg.get("inject_mode", "paste"), bool(cfg.get("restore_clipboard", True)))
+        log.info("回写完成（方式=%s, %d 字）", way, len(result))
 
         self.last_result = {
             "source": text, "target": result, "lang": target,

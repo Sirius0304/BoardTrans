@@ -126,6 +126,14 @@ def send_unicode_text(text: str, chunk_size: int = 48) -> None:
 
 # ---------------- 对外接口 ----------------
 
+# 发 Ctrl+V 前后的等待（2026-10-14 修「游戏里贴出旧剪贴板」）：
+# 普通程序 16ms 内就完成粘贴，但游戏（守望先锋等）在帧循环里异步处理输入，
+# 等它真正去读剪贴板时，原来的 0.06+0.15 秒早过了 —— 而我们已经把剪贴板
+# 还原成旧内容，游戏贴出来的自然是"粘贴前的剪贴板"。
+# 给足两段余量（合计约 1 秒），代价只是"还原剪贴板"晚一点发生。
+PASTE_PREP_WAIT = 0.15
+PASTE_CONFIRM_WAIT = 0.8
+
 
 def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) -> str:
     """把译文写回当前光标位置。返回实际使用的方式说明。"""
@@ -146,9 +154,9 @@ def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) 
         send_unicode_text(text)
         return "逐字输入（剪贴板被占用，已降级）"
 
-    time.sleep(0.06)
+    time.sleep(PASTE_PREP_WAIT)
     keyboard.send("ctrl+v")
-    time.sleep(0.15)   # 等目标程序完成粘贴
+    time.sleep(PASTE_CONFIRM_WAIT)   # 等目标程序完成粘贴（游戏要等到帧循环，见常量注释）
 
     if restore_clipboard:
         if not capture.set_clipboard_text(backup):
