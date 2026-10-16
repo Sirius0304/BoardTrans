@@ -476,22 +476,6 @@ class SettingsWindow:
                   bordercolor=[("focus", COLOR_PRIMARY)],
                   foreground=[("disabled", ui.COLOR_MUTED)])
 
-        # 数字输入框（翻译字数上限）：沿用输入框观感，数字右对齐、箭头常显
-        try:
-            style.configure("Limit.TSpinbox", font="BoardTransSmall", padding=(4, 3),
-                            fieldbackground=COLOR_CARD, background=COLOR_CARD,
-                            foreground=COLOR_TEXT, insertbackground=COLOR_TEXT,
-                            bordercolor=ui.COLOR_BORDER_STRONG, lightcolor=COLOR_CARD,
-                            darkcolor=COLOR_CARD, arrowcolor=COLOR_SUBTEXT)
-        except Exception:  # noqa: BLE001
-            # 老版本 Tk 不认这些选项时退回最小集，不影响功能
-            style.configure("Limit.TSpinbox", font="BoardTransSmall", padding=(4, 3),
-                            fieldbackground=COLOR_CARD, foreground=COLOR_TEXT)
-        style.map("Limit.TSpinbox",
-                  fieldbackground=[("readonly", COLOR_CARD)],
-                  bordercolor=[("focus", COLOR_PRIMARY)],
-                  foreground=[("disabled", ui.COLOR_MUTED)])
-
         # 进度条：细、主色（参考图里的细进度条）
         style.configure("Thin.Horizontal.TProgressbar", thickness=6,
                         background=COLOR_PRIMARY, troughcolor="#EDF0F4",
@@ -588,7 +572,6 @@ class SettingsWindow:
         self._build_models_section(content)
         self._build_language_section(content)
         self._build_quality_section(content)
-        self._build_length_section(content)
         self._build_memory_section(content)
         self._build_hotkey_section(content)
         tk.Frame(content, bg=COLOR_BG, height=4).pack(fill="x")
@@ -915,81 +898,6 @@ class SettingsWindow:
         ui.ToggleSwitch(line, self._idle_unload_var, command=self._on_memory_change,
                         page_bg=COLOR_CARD).pack(side="right")
 
-    def _build_length_section(self, parent) -> None:
-        """翻译字数上限：控制**译文**最多多少字（不影响取词长度）。
-
-        取值 0~1000：**0 = 不翻译**，1000 = 允许的最大值。
-        校验分两层：界面层（只能输数字 + 提交时夹紧）与配置层
-        （config.clamp_translate_chars，兜住手工编辑 config.json 的情况）。
-        """
-        card = self._card(parent, "翻译字数上限", icon="ruler")
-
-        row = tk.Frame(card, bg=COLOR_CARD)
-        row.pack(fill="x")
-        ui.TextLabel(row, text="译文最多", bg=COLOR_CARD, fg=COLOR_TEXT,
-                     font="BoardTransSmall").pack(side="left")
-
-        self._limit_var = tk.StringVar(master=self.root, value="1000")
-        self._limit_spin = ttk.Spinbox(
-            row, from_=config.TRANSLATE_CHARS_MIN, to=config.TRANSLATE_CHARS_MAX,
-            increment=1, width=6, textvariable=self._limit_var,
-            command=self._on_limit_spin, style="Limit.TSpinbox", justify="right",
-        )
-        self._limit_spin.pack(side="left", padx=(6, 4))
-        # 只允许输数字（最多 4 位）：输到 5 位说明想超过 1000，提交时统一夹紧
-        vcmd = (self.root.register(self._validate_limit), "%P")
-        self._limit_spin.configure(validate="key", validatecommand=vcmd)
-        # 失焦 / 回车 / 点箭头：都走同一条"提交并夹紧"的路径，避免留一个非法值在框里
-        self._limit_spin.bind("<FocusOut>", self._on_limit_commit)
-        self._limit_spin.bind("<Return>", self._on_limit_commit)
-
-        ui.TextLabel(row, text="字（0 = 不翻译）", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                     font="BoardTransSmall").pack(side="left")
-
-        self._limit_hint = ui.TextLabel(card, text="", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
-                                        font="BoardTransSmall", justify="left", anchor="w",
-                                        wraplength=ui.S(440))
-        self._limit_hint.pack(fill="x", pady=(6, 0))
-
-    # -- 翻译字数上限 -------------------------------------------------------
-
-    def _validate_limit(self, new_text: str) -> bool:
-        """输入校验：只放行数字（允许临时清空，提交时回退默认值）。"""
-        if new_text == "":
-            return True
-        return new_text.isdigit() and len(new_text) <= 4
-
-    def _limit_value(self) -> int:
-        """界面上的译文上限，已夹到 0~1000；读不出来时给默认值。"""
-        try:
-            raw = int(str(self._limit_var.get()).strip())
-        except (TypeError, ValueError):
-            return config.clamp_translate_chars(None)
-        return config.clamp_translate_chars(raw)
-
-    def _on_limit_spin(self) -> None:
-        """点了 Spinbox 的上下箭头。"""
-        self._on_limit_commit()
-
-    def _on_limit_commit(self, _event=None) -> None:
-        """把界面上的值夹到合法区间、刷新说明文字，并按实际值判"未保存"。"""
-        value = self._limit_value()
-        self._limit_var.set(str(value))
-        self._update_limit_hint()
-        self._mark_dirty()
-
-    def _update_limit_hint(self) -> None:
-        n = self._limit_value()
-        if n == 0:
-            text = ("当前：不翻译。按快捷键不会有任何变化，原文也不会被改动。"
-                    "想恢复翻译，请把它改成 1 以上的值。")
-        elif n <= 100:
-            text = (f"当前：译文超过 {n} 字会被截断（以 … 结尾）。"
-                    f"适合只想要短句/摘要式输出的场景。")
-        else:
-            text = f"当前：译文超过 {n} 字会被截断（以 … 结尾）。"
-        self._limit_hint.configure(text=text)
-
     def _build_hotkey_section(self, parent) -> None:
         card = self._card(parent, "快捷键", icon="hotkey")
         ui.TextLabel(card, text="按一下就能把刚打的中文变成译文。", bg=COLOR_CARD, fg=COLOR_SUBTEXT,
@@ -1157,9 +1065,7 @@ class SettingsWindow:
         """
         return (cfg.get("hotkey"), cfg.get("quality"), cfg.get("target_lang"),
                 int(cfg.get("idle_unload_minutes", 0) or 0) > 0,
-                bool(cfg.get("notify_enabled", True)),
-                config.clamp_translate_chars(cfg.get(
-                    "max_translate_chars", config.DEFAULTS["max_translate_chars"])))
+                bool(cfg.get("notify_enabled", True)))
 
     def _load_from_config(self, force: bool = False) -> None:
         """把配置值填进界面控件（程序化刷新，不标记为"用户修改"）。"""
@@ -1177,9 +1083,6 @@ class SettingsWindow:
             self._lang_var.set(str(cfg.get("target_lang") or "en"))
             self._idle_unload_var.set(int(cfg.get("idle_unload_minutes", 0) or 0) > 0)
             self._notify_enabled_var.set(bool(cfg.get("notify_enabled", True)))
-            self._limit_var.set(str(config.clamp_translate_chars(
-                cfg.get("max_translate_chars", config.DEFAULTS["max_translate_chars"]))))
-            self._update_limit_hint()
             self._dirty = False
             self._update_dirty_bar()
         finally:
@@ -1201,12 +1104,11 @@ class SettingsWindow:
         self._refresh_models()
 
     def _pending_values(self) -> tuple:
-        """界面上的待保存设置（快捷键 / 档位 / 目标语言 / 内存分钟数 / 译文上限）。"""
+        """界面上的待保存设置（快捷键 / 档位 / 目标语言 / 内存分钟数）。"""
         return (str(self._pending_hotkey or DEFAULT_HOTKEY),
                 str(self._quality_var.get() or "fast"),
                 str(self._lang_var.get() or "en"),
-                15 if self._idle_unload_var.get() else 0,
-                self._limit_value())
+                15 if self._idle_unload_var.get() else 0)
 
     def _saved_values(self) -> tuple:
         """配置文件里当前真正生效的对应设置。"""
@@ -1214,9 +1116,7 @@ class SettingsWindow:
         return (str(cfg.get("hotkey") or DEFAULT_HOTKEY),
                 str(cfg.get("quality") or "fast"),
                 str(cfg.get("target_lang") or "en"),
-                int(cfg.get("idle_unload_minutes", 0) or 0),
-                config.clamp_translate_chars(cfg.get(
-                    "max_translate_chars", config.DEFAULTS["max_translate_chars"])))
+                int(cfg.get("idle_unload_minutes", 0) or 0))
 
     def _values_changed(self) -> bool:
         """界面上的值是否真的和已保存的值不一致。"""
@@ -1777,21 +1677,16 @@ class SettingsWindow:
         # 内存优化：勾选=空闲 15 分钟释放，不勾=常驻
         new_idle_minutes = 15 if self._idle_unload_var.get() else 0
         old_idle_minutes = int(cfg.get("idle_unload_minutes", 0) or 0)
-        # 译文长度上限：保存前再夹一次（用户在框里输过非法值也能安全落盘）
-        new_limit = self._limit_value()
-        old_limit = config.clamp_translate_chars(
-            cfg.get("max_translate_chars", config.DEFAULTS["max_translate_chars"]))
 
         hotkey_changed = new_hotkey != cfg.get("hotkey")
         quality_changed = new_quality != cfg.get("quality")
         lang_changed = new_lang != cfg.get("target_lang")
         memory_changed = new_idle_minutes != old_idle_minutes
-        limit_changed = new_limit != old_limit
         # 「通知提醒」不在保存批量里：它在勾选/取消的那一刻就已经生效落盘
         # （见 _on_notify_change），避免"改了没保存 → 依然被提醒"的错觉
 
         if not (hotkey_changed or quality_changed or lang_changed
-                or memory_changed or limit_changed):
+                or memory_changed):
             self._dirty = False
             self._update_dirty_bar()
             self._show_notice("设置和当前生效的一致，无需保存。", "info")
@@ -1819,11 +1714,6 @@ class SettingsWindow:
 
         if memory_changed:
             config.update(idle_unload_minutes=new_idle_minutes)
-
-        if limit_changed:
-            config.update(max_translate_chars=new_limit)
-            self.service.reload_config()
-            self.service.reload_config()
 
         self._pending_quality = new_quality
         self._load_from_config(force=True)
@@ -1891,14 +1781,11 @@ class SettingsWindow:
             self._lang_var.set("en")
             self._idle_unload_var.set(True)
             self._notify_enabled_var.set(True)
-            self._limit_var.set(str(config.DEFAULTS["max_translate_chars"]))
-            self._update_limit_hint()
         finally:
             self._syncing = False
         # 一次性落盘 + 让服务重载：恢复默认本身就是"已保存"状态，不需要再点「保存」
         config.update(hotkey=DEFAULT_HOTKEY, quality="fast", target_lang="en",
-                      idle_unload_minutes=15, notify_enabled=True,
-                      max_translate_chars=config.DEFAULTS["max_translate_chars"])
+                      idle_unload_minutes=15, notify_enabled=True)
         self.service.reload_config()
         if self._last_config_snapshot:
             # 免得心跳轮询把这次写入当成"别处改了配置"，又同步一遍

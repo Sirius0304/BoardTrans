@@ -46,19 +46,24 @@ CHECKS = [
     ("app.capture", "PARAGRAPH_MAX_LINES", "整段取词的行数上限"),
     ("app.config", "_migrate_old_defaults", "旧默认值平滑升级"),
     ("app.config", "20000", "max_chars 新默认值"),
-    # 2026-10-13 新增「翻译字数上限」
-    ("app.config", "clamp_translate_chars", "译文上限的边界夹紧"),
-    ("app.engine", "_translate_capped", "译文上限真正作用于译文"),
-    ("app.engine", "TRUNCATION_MARK", "截断时的省略号标记"),
-    ("app.settings_window", "_build_length_section", "翻译字数上限设置卡片"),
-    ("app.settings_window", "_validate_limit", "数字输入校验"),
+    # 2026-10-14 修游戏场景（守望先锋删原文+贴旧剪贴板）
+    ("app.injector", "PASTE_CONFIRM_WAIT", "粘贴确认等待（防游戏帧循环竞态）"),
+    ("app.capture", "COPY_RETRY_SETTLE", "复制重试前等修饰键物理抬起"),
+    ("app.service", "已把原文放回原处", "空译文回注原文（防误删）"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。
 # 2026-10-05 删掉了弹窗卡片内的加粗标题与左侧语义色竖线，
 # 竖线由 _accent_color() 取色 —— 该函数已删，包里若还能找到它就是没打进去。
+# 2026-10-16 整体移除「翻译字数上限」功能 —— 相关符号若还在包里就是残留。
 FORBIDDEN = [
     ("app.dialogs", "_accent_color", "弹窗左侧竖线取色函数（已随竖线一起删除）"),
+    ("app.config", "clamp_translate_chars", "译文上限夹紧（功能已整体移除）"),
+    ("app.engine", "_translate_capped", "截断翻译（功能已整体移除）"),
+    ("app.engine", "TRUNCATION_MARK", "截断省略号（功能已整体移除）"),
+    ("app.settings_window", "_build_length_section", "字数上限设置卡片（已删除）"),
+    ("app.settings_window", "_validate_limit", "字数输入校验（已删除）"),
+    ("app.settings_window", "翻译字数上限", "字数上限卡片标题（已删除）"),
 ]
 
 

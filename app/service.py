@@ -258,19 +258,6 @@ class HotkeyService:
 
         target = cfg.get("target_lang", "en")
         quality = cfg.get("quality", "fast")
-        # 译文长度上限。**必须在取词之前判断**（2026-10-13 改语义为"0 = 不翻译"）：
-        # 取词成功后 _post_process 会先把原文删掉，等到翻译那一步才跳过，
-        # 就等于"原文没了、译文也没有" —— 这是最糟的数据丢失。
-        # 所以这里提前返回：不取词、不删字、不改动任何东西，只告诉用户当前状态。
-        limit = config.clamp_translate_chars(
-            cfg.get("max_translate_chars", config.DEFAULTS["max_translate_chars"]))
-        if limit == 0:
-            log.info("译文上限为 0（不翻译），本次不改动原文")
-            self._notify(
-                "没有翻译",
-                "「翻译字数上限」当前是 0，表示不翻译。\n"
-                "要恢复翻译，请在设置里把它改成 1 以上的值。")
-            return
 
         # 1) 取词
         text, how = capture_selected_text(cfg.get("capture_mode", "auto"), int(cfg.get("max_chars", 20000)))
@@ -289,12 +276,10 @@ class HotkeyService:
             self._open_settings()
             return
 
-        # 3) 翻译
+        # 3) 翻译（全量翻译，不做字数截断 —— 2026-10-16 已移除字数上限功能）
         engine = self._get_engine()
         t0 = time.time()
-        # 这里必须**真的把上限传进引擎**，光存进配置不算生效。
-        # 能走到这里说明 limit >= 1（0 已在上面提前返回）。
-        result = engine.translate(text, target, quality, max_chars=limit)
+        result = engine.translate(text, target, quality)
         cost = time.time() - t0
         if not result:
             # 兜底（2026-10-14）：取词成功后原文已被 Delete 删掉，
@@ -312,11 +297,9 @@ class HotkeyService:
         self.last_result = {
             "source": text, "target": result, "lang": target,
             "quality": quality, "seconds": round(cost, 3), "route": engine.last_stats.get("route", ""),
-            "max_translate_chars": limit,
         }
-        log.info("完成 %.2fs %s -> %s | %s | %s | 译文上限 %d 字%s",
-                 cost, text[:30], result[:30], way, engine.last_stats,
-                 limit, "（不限制）" if limit == 0 else "")
+        log.info("完成 %.2fs %s -> %s | %s | %s",
+                 cost, text[:30], result[:30], way, engine.last_stats)
         self._notify(
             f"已翻译成{'英文' if target == 'en' else '日文'}（{cost:.2f}s）",
             result[:80],

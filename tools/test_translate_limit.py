@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
-"""翻译字数上限回归（2026-10-13）
+"""「翻译字数上限」功能移除回归（2026-10-16）
 
-需求：设置里新增「翻译字数上限」，取值 0~1000，**保存后要真正作用于译文**，
-而不是只把值存进配置。
-
-分三层验证：
-  1. 配置层 —— clamp_translate_chars 的边界行为（0 / 1000 / 负数 / 超范围 / 非数字）
-  2. 引擎层 —— 上限真的会截断译文（这是"真正生效"的核心证据）
-  3. 装配层 —— service 把配置值传进引擎；config.load 会把手写越界值夹紧
+需求：设置里的字数选择功能已整体删除，翻译改为**全量翻译，不做任何截断**。
+本测试验证三件事：
+  1. 删干净 —— app/ 源码里不再有字数上限相关符号（防死代码残留）
+  2. 不截断 —— 真实引擎翻长文，译文完整（长度与全量基线一致、不以省略号结尾）
+  3. 配置兼容 —— 老配置里残留的 max_translate_chars 键被静默忽略（= None），
+     不报错、不影响其他配置项生效
 """
 import os
 import sys
@@ -24,6 +23,8 @@ def check(name, cond, detail=""):
     print(f"  [{'OK' if cond else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
 
 
+APP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app")
+
 LONG_ZH = (
     "今天早上我六点半就起床了，因为要赶八点的火车去上海出差。"
     "出门的时候天还没完全亮，路上几乎没有行人，只有环卫工人在清扫街道。"
@@ -32,100 +33,64 @@ LONG_ZH = (
     "窗外的风景从城市的高楼慢慢变成了田野和小河，心情也跟着放松了下来。"
 )
 
+# 已删除的符号清单：任何一个还出现在源码里，就是没删干净
+REMOVED_SYMBOLS = [
+    "max_translate_chars", "clamp_translate_chars", "TRANSLATE_CHARS_MIN",
+    "TRANSLATE_CHARS_MAX", "normalize_limit", "ellipsize", "TRUNCATION_MARK",
+    "_translate_capped", "_build_length_section", "_validate_limit", "_limit_value",
+    "_on_limit_commit", "_update_limit_hint", "_on_limit_spin", "Limit.TSpinbox",
+]
+
 
 def main():
     print("=" * 68)
-    print("翻译字数上限回归")
+    print("翻译字数上限移除回归")
     print("=" * 68)
 
-    # ---------- 1. 配置层边界 ----------
-    print("\n[1] 配置层：clamp_translate_chars 的边界行为")
-    cases = [
-        (0, 0, "0 本身合法（=不翻译）"),
-        (1000, 1000, "1000 本身合法（上限端点）"),
-        (-5, 1000, "负数回退默认值（**不**映射到 0，否则等于误停用翻译）"),
-        (5000, 1000, "超上限夹到 1000"),
-        ("300", 300, "数字字符串可解析"),
-        ("abc", 1000, "非数字回退默认值"),
-        (None, 1000, "None 回退默认值"),
-        ("", 1000, "空串回退默认值"),
-        (250, 250, "区间内原样返回"),
-    ]
-    for raw, want, desc in cases:
-        got = config.clamp_translate_chars(raw)
-        check(f"clamp({raw!r}) -> {want}（{desc}）", got == want, f"实际 {got}")
+    # ---------- 1. 源码无残留 ----------
+    print("\n[1] app/ 源码里不再有字数上限相关符号")
+    for fname in os.listdir(APP_DIR):
+        if not fname.endswith(".py"):
+            continue
+        with open(os.path.join(APP_DIR, fname), encoding="utf-8") as f:
+            src = f.read()
+        for sym in REMOVED_SYMBOLS:
+            check(f"{fname} 不含 {sym}", sym not in src)
 
-    print("\n[2] ellipsize 的截断行为")
-    check("不超长时原样返回", engine_mod.ellipsize("hello", 10) == "hello")
-    r = engine_mod.ellipsize("abcdefghij", 5)
-    check("超长时截到 limit-1 + 省略号", r == "abcd…", repr(r))
-    check("截断后长度不超过上限", len(r) <= 5, f"len={len(r)}")
-    check("limit=1 时只留省略号", engine_mod.ellipsize("abcdef", 1) == "…")
-    check("limit<=0 时不截断", engine_mod.ellipsize("abcdef", 0) == "abcdef")
-    check("中文按字符数计", len(engine_mod.ellipsize("一二三四五六", 3)) == 3)
-
-    # ---------- 3. 引擎层：真的截断 ----------
-    print("\n[3] 引擎层：上限真的作用于译文（核心）")
+    # ---------- 2. 引擎全量翻译 ----------
+    print("\n[2] 引擎层：全量翻译，不做截断")
     eng = engine_mod.TranslationEngine()
 
-    full = eng.translate(LONG_ZH, "en", "fast", max_chars=None)
-    check("不限制（None）时拿到完整译文", len(full) > 200, f"{len(full)} 字")
+    full = eng.translate(LONG_ZH, "en", "fast")
+    check("长文译文完整（不被压到 1000 字以内）", len(full) > 200, f"{len(full)} 字")
+    check("译文不以省略号结尾（截断已移除）", not full.endswith("…"), repr(full[-8:]))
 
-    for limit in (60, 120, 300):
-        out = eng.translate(LONG_ZH, "en", "fast", max_chars=limit)
-        ok = len(out) <= limit
-        check(f"上限 {limit}：译文不超过 {limit} 字", ok, f"实际 {len(out)} 字")
-        check(f"上限 {limit}：被截断时有省略号提示", out.endswith("…"), repr(out[-12:]))
+    again = eng.translate(LONG_ZH, "en", "fast")
+    check("两次翻译结果一致（无随机截断行为）", again == full)
 
-    big = eng.translate(LONG_ZH, "en", "fast", max_chars=100000)
-    check("上限远大于自然长度时不多加省略号", not big.endswith("…"), f"{len(big)} 字")
+    ja = eng.translate(LONG_ZH, "ja", "fast")
+    check("日文方向同样全量翻译", len(ja) > 100, f"{len(ja)} 字")
+    check("日文译文不以省略号结尾", not ja.endswith("…"), repr(ja[-8:]))
 
-    none = eng.translate(LONG_ZH, "en", "fast", max_chars=0)
-    check("上限 0 = 不翻译，返回空串", none == "", repr(none[:30]))
-    none_ja = eng.translate(LONG_ZH, "ja", "fast", max_chars=0)
-    check("上限 0 时日文方向同样不翻译", none_ja == "", repr(none_ja[:30]))
-    check("None 与不传参数等价（都不限制）",
-          eng.translate("你好。", "en", "fast") == eng.translate("你好。", "en", "fast", max_chars=None))
-    tiny = eng.translate(LONG_ZH, "en", "fast", max_chars=1)
-    check("上限 1 时输出就是省略号（仍是合法长度）", len(tiny) <= 1, repr(tiny))
-
-    # 第一句本身就超上限：也必须被压住
-    first = "这是一段用来测试单个句子就超过上限的中文文本，里面没有任何标点符号所以不会被切分。" * 2
-    one = eng.translate(first, "en", "fast", max_chars=80)
-    check("首句即超限时也压到上限内", len(one) <= 80, f"实际 {len(one)} 字")
-
-    print("\n[4] 引擎层：日文方向（上限只作用于最终日文）")
-    ja = eng.translate(LONG_ZH, "ja", "fast", max_chars=120)
-    check("中日方向：日文译文不超过 120 字", len(ja) <= 120, f"实际 {len(ja)} 字")
-    check("中日方向：被截断时有省略号", ja.endswith("…"), repr(ja[-10:]))
-    ja_full = eng.translate(LONG_ZH, "ja", "fast", max_chars=None)
-    check("中日方向：不限制时完整", len(ja_full) > len(ja), f"{len(ja_full)} vs {len(ja)}")
-
-    # ---------- 5. 装配层 ----------
-    print("\n[5] 装配层：service 真的把配置值传进引擎")
     import inspect
-    from app import service as service_mod
-    src = inspect.getsource(service_mod)
-    check("service 读取 max_translate_chars", "max_translate_chars" in src)
-    check("service 把它传给 engine.translate", "max_chars=limit" in src)
-    check("service 用 clamp 夹过一次", "clamp_translate_chars" in src)
-    # 0 = 不翻译的判断必须排在取词之前：取词成功后会先删原文，
-    # 等翻译那步再跳过就等于"原文没了、译文也没有"
-    i_limit = src.find("if limit == 0:")
-    i_capture = src.find("capture_selected_text(")
-    check("service 里 0 的判断在取词之前（否则会丢原文）",
-          i_limit != -1 and i_capture != -1 and i_limit < i_capture,
-          f"limit@{i_limit} < capture@{i_capture} = {i_limit < i_capture}")
+    sig = inspect.signature(engine_mod.TranslationEngine.translate)
+    check("engine.translate 已无 max_chars 参数", "max_chars" not in sig.parameters,
+          str(list(sig.parameters)))
+    sig2 = inspect.signature(engine_mod.MarianTranslator.translate_text)
+    check("translate_text 已无 max_chars 参数", "max_chars" not in sig2.parameters,
+          str(list(sig2.parameters)))
 
-    print("\n[6] 配置层：手工写越界值会被 load 夹紧")
-    r = _probe_config('{"max_translate_chars": 5000}')
-    check("config.json 里写 5000 → 读回 1000", r == "1000", r)
-    r2 = _probe_config('{"max_translate_chars": 300}')
-    check("config.json 里写 300 → 读回 300（用户值不动）", r2 == "300", r2)
-    r3 = _probe_config('{"max_translate_chars": "abc"}')
-    check("config.json 里写 abc → 读回默认值 1000", r3 == "1000", r3)
-    r4 = _probe_config('{}')
-    check("没有该键 → 读回默认值 1000", r4 == "1000", r4)
+    # ---------- 3. 配置层：残留键被忽略 ----------
+    print("\n[3] 配置层：老配置残留的 max_translate_chars 被静默忽略")
+    r = _probe_config('{"max_translate_chars": 300, "quality": "quality"}')
+    check("残留键读回 None（被丢弃，不报错）", r == "None", r)
+
+    # ---------- 4. service 装配 ----------
+    print("\n[4] service：调用不带上限")
+    from app import service as service_mod
+    ssrc = inspect.getsource(service_mod)
+    check("service 不再读取 max_translate_chars", "max_translate_chars" not in ssrc)
+    check("service 调用 engine.translate 不带 max_chars", "max_chars=" not in ssrc)
 
     print()
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
@@ -135,7 +100,7 @@ def main():
 
 
 def _probe_config(payload_json: str) -> str:
-    """在隔离数据目录里写一份配置，读回来看 max_translate_chars 的最终值。"""
+    """在隔离数据目录里写一份配置，读回 max_translate_chars 的最终值。"""
     import subprocess
     import tempfile
 
