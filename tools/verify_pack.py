@@ -53,6 +53,8 @@ CHECKS = [
     ("app.config", "20000", "max_chars 新默认值"),
     # 2026-10-14 修游戏场景（守望先锋删原文+贴旧剪贴板）
     ("app.injector", "PASTE_CONFIRM_WAIT", "粘贴确认等待（防游戏帧循环竞态）"),
+    ("app.injector", "paste_confirm_wait", "粘贴等待按前台窗口自适应"),
+    ("app.injector", "_foreground_is_fullscreen", "全屏窗口判定"),
     ("app.capture", "COPY_RETRY_SETTLE", "复制重试前等修饰键物理抬起"),
     ("app.service", "已把原文放回原处", "空译文回注原文（防误删）"),
 ]

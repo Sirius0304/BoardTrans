@@ -58,6 +58,68 @@ if m:
     check("空结果分支里调用了 inject_text 回注原文", "inject_text(text" in block)
     check("回注用的是原文 text 而非 result", "inject_text(result" not in block)
 
+print("== 4) 粘贴等待按前台窗口自适应（2026-10-16 方案④）==")
+import time  # noqa: E402
+
+DESKTOP = injector.PASTE_CONFIRM_WAIT_DESKTOP
+FULL = injector.PASTE_CONFIRM_WAIT_FULLSCREEN
+check("桌面程序等待更短（<= 0.3s）", DESKTOP <= 0.3, str(DESKTOP))
+check("全屏/游戏等待仍给足（>= 0.6s，防贴出旧剪贴板）", FULL >= 0.6, str(FULL))
+check("兼容别名取保守值（= 全屏值，漏判不会丢粘贴）",
+      injector.PASTE_CONFIRM_WAIT == FULL, str(injector.PASTE_CONFIRM_WAIT))
+check("前台全屏判定函数可用且返回布尔",
+      isinstance(injector._foreground_is_fullscreen(), bool),
+      str(injector._foreground_is_fullscreen()))
+check("paste_confirm_wait() 只会给出这两个值之一",
+      injector.paste_confirm_wait() in (DESKTOP, FULL), str(injector.paste_confirm_wait()))
+
+saved_probe = injector._foreground_is_fullscreen
+try:
+    injector._foreground_is_fullscreen = lambda: True
+    check("全屏 → 用长等待 0.8s", injector.paste_confirm_wait() == FULL,
+          str(injector.paste_confirm_wait()))
+    injector._foreground_is_fullscreen = lambda: False
+    check("桌面 → 用短等待 0.25s", injector.paste_confirm_wait() == DESKTOP,
+          str(injector.paste_confirm_wait()))
+
+    # 真实计时：两条分支的等待差必须落在 inject_text 的实际耗时上
+    src = open(os.path.join(os.path.dirname(injector.__file__), "injector.py"),
+               encoding="utf-8").read()
+    body = src[src.index("def inject_text"):]
+    check("inject_text 走自适应函数而非写死的常量",
+          "paste_confirm_wait()" in body and "time.sleep(PASTE_CONFIRM_WAIT)" not in body)
+
+    from app import capture as cap
+    saved_send = cap.keyboard.send
+    saved_rel = cap.release_modifiers
+    saved_get, saved_set = cap.get_clipboard_text, cap.set_clipboard_text
+    cap.keyboard.send = lambda k: None
+    cap.release_modifiers = lambda settle=0.02: None
+    cap.get_clipboard_text = lambda: "old"
+    cap.set_clipboard_text = lambda t: True
+
+    def timed(fullscreen: bool) -> float:
+        injector._foreground_is_fullscreen = lambda: fullscreen
+        t0 = time.monotonic()
+        injector.inject_text("译好的英文", "paste", True)
+        return time.monotonic() - t0
+
+    try:
+        dt_desktop = timed(False)
+        dt_full = timed(True)
+    finally:
+        cap.keyboard.send, cap.release_modifiers = saved_send, saved_rel
+        cap.get_clipboard_text, cap.set_clipboard_text = saved_get, saved_set
+        injector._foreground_is_fullscreen = saved_probe
+
+    check("桌面场景整条回写 < 0.6s", dt_desktop < 0.6, f"{dt_desktop * 1000:.0f}ms")
+    check("全屏场景整条回写 >= 0.9s（仍保留游戏需要的余量）",
+          dt_full >= 0.9, f"{dt_full * 1000:.0f}ms")
+    check("两场景确有可观测差异（>= 0.4s）", (dt_full - dt_desktop) >= 0.4,
+          f"差 {((dt_full - dt_desktop) * 1000):.0f}ms")
+finally:
+    injector._foreground_is_fullscreen = saved_probe
+
 print()
 print(f"通过 {PASS} 项，失败 {FAIL} 项")
 sys.exit(1 if FAIL else 0)

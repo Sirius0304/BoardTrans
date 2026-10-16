@@ -130,9 +130,63 @@ def send_unicode_text(text: str, chunk_size: int = 48) -> None:
 # 普通程序 16ms 内就完成粘贴，但游戏（守望先锋等）在帧循环里异步处理输入，
 # 等它真正去读剪贴板时，原来的 0.06+0.15 秒早过了 —— 而我们已经把剪贴板
 # 还原成旧内容，游戏贴出来的自然是"粘贴前的剪贴板"。
-# 给足两段余量（合计约 1 秒），代价只是"还原剪贴板"晚一点发生。
 PASTE_PREP_WAIT = 0.15
-PASTE_CONFIRM_WAIT = 0.8
+
+# 粘贴后的确认等待，**按前台窗口类型自适应**（2026-10-16 提速方案④）：
+#   普通桌面程序：16ms 一帧，0.25s 早已粘贴完毕，多等纯属浪费；
+#   全屏 / 游戏    ：异步帧循环 + 输入排队，实测 0.15s 不够（会贴出旧剪贴板），给 0.8s。
+# 判定见 _foreground_is_fullscreen()：前台窗口是否铺满所在显示器。
+PASTE_CONFIRM_WAIT_DESKTOP = 0.25
+PASTE_CONFIRM_WAIT_FULLSCREEN = 0.8
+# 兼容旧引用的别名：取**保守值**，任何漏判都退回到游戏那套较长等待，不会丢粘贴。
+PASTE_CONFIRM_WAIT = PASTE_CONFIRM_WAIT_FULLSCREEN
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+
+def _foreground_is_fullscreen() -> bool:
+    """前台窗口是否铺满整个显示器（= 全屏游戏 / 无边框全屏视频）。
+
+    为什么需要它：游戏聊天框在帧循环里异步读剪贴板，粘贴后必须多等一会儿
+    才能还原剪贴板（否则贴出旧内容）；而普通桌面程序根本不需要等这么久。
+    任何异常/取不到都返回 False（退化为"桌面"的快路径，最长也就等 0.25s，
+    出问题还有 paste 失败时的原文回注兜底）。
+    """
+    try:
+        user32 = _user32
+        # 句柄是 64 位指针，必须显式声明返回值类型，否则会被截断成 32 位
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.MonitorFromWindow.restype = ctypes.c_void_p
+        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        monitor = user32.MonitorFromWindow(hwnd, 2)      # 2 = MONITOR_DEFAULTTONEAREST
+        if not monitor:
+            return False
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return False
+        m = info.rcMonitor
+        return (rect.left <= m.left and rect.top <= m.top
+                and rect.right >= m.right and rect.bottom >= m.bottom)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def paste_confirm_wait() -> float:
+    """粘贴后该等多久再还原剪贴板：全屏/游戏 0.8s，普通桌面程序 0.25s。"""
+    return PASTE_CONFIRM_WAIT_FULLSCREEN if _foreground_is_fullscreen() \
+        else PASTE_CONFIRM_WAIT_DESKTOP
 
 
 def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) -> str:
@@ -156,7 +210,10 @@ def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) 
 
     time.sleep(PASTE_PREP_WAIT)
     keyboard.send("ctrl+v")
-    time.sleep(PASTE_CONFIRM_WAIT)   # 等目标程序完成粘贴（游戏要等到帧循环，见常量注释）
+    wait = paste_confirm_wait()      # 按前台窗口自适应（见常量注释）
+    log.info("粘贴后等待 %.2fs 再还原剪贴板（前台窗口：%s）",
+             wait, "全屏/游戏" if wait == PASTE_CONFIRM_WAIT_FULLSCREEN else "桌面程序")
+    time.sleep(wait)
 
     if restore_clipboard:
         if not capture.set_clipboard_text(backup):
