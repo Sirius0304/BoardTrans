@@ -8,9 +8,12 @@
 用来验证「精简后的 exe 里，翻译引擎和设置窗口是不是真的还能用」。
 """
 
+import os
+
 from PyInstaller.utils.hooks import collect_dynamic_libs
 
-PROJECT = r"F:\shunyi"
+PROJECT = os.path.dirname(os.path.abspath(SPEC)) if "SPEC" in globals() \
+    else os.path.dirname(os.path.abspath("自检_精简.spec"))
 
 binaries = collect_dynamic_libs("ctranslate2")
 binaries += collect_dynamic_libs("sentencepiece")
@@ -41,7 +44,7 @@ excludes = [
 ]
 
 a = Analysis(
-    [PROJECT + r"\selftest.py"],
+    [os.path.join(PROJECT, "selftest.py")],
     pathex=[PROJECT],
     binaries=binaries,
     datas=[],

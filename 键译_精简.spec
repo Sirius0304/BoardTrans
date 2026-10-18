@@ -21,9 +21,16 @@
 结果：exe 里的未压缩内容从 132.4 MB 降到约 98 MB。
 """
 
+import os
+
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
-PROJECT = r"F:\shunyi"
+# 项目根目录：按**本 spec 文件所在位置**推导（2026-10-18）
+# 过去写死 r"F:\shunyi"，两个问题：别人克隆后直接打包不了；本机路径也进了公开仓库。
+try:
+    PROJECT = os.path.dirname(os.path.abspath(SPEC))     # PyInstaller 注入的 SPEC
+except NameError:                                        # 被其它工具直接 exec 时
+    PROJECT = os.path.dirname(os.path.abspath("键译_精简.spec"))
 
 # 只收 ctranslate2 的原生库（DLL / pyd），不收它的 Python 子模块
 binaries = collect_dynamic_libs("ctranslate2")
@@ -61,13 +68,13 @@ excludes = [
 ]
 
 a = Analysis(
-    [PROJECT + r"\run_stage2.py"],
+    [os.path.join(PROJECT, "run_stage2.py")],
     pathex=[PROJECT],
     binaries=binaries,
     # app_icon.ico 同时作为「本程序自有标记」放进包内：
     # 启动时据此识别并清理自己遗留的 _MEI* 解包目录（只删带此标记的）
     datas=[
-        (PROJECT + r"\app_icon.ico", "."),
+        (os.path.join(PROJECT, "app_icon.ico"), "."),
         # certifi 的 CA 证书包：不带它，exe 里的 TLS 校验只能靠 Windows 系统证书库，
         # 遇到公司网络/杀软的 TLS 中间人会直接 CERTIFICATE_VERIFY_FAILED（模型下不下来）
         *collect_data_files("certifi"),
@@ -114,7 +121,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=PROJECT + r"\app_icon.ico",
+    icon=os.path.join(PROJECT, "app_icon.ico"),
 )
 
 # 打包时把这行提示打出来，方便核对过滤是否生效

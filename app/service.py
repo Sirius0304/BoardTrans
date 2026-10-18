@@ -32,6 +32,19 @@ log = get_logger()
 
 NotifyFn = Callable[[str, str], None]
 
+
+def _preview(text: str, limit: int, cfg: dict | None = None) -> str:
+    """日志里怎么显示用户文本：默认**只显示字数**（隐私优先，2026-10-18）。
+
+    日志在本机（%LOCALAPPDATA%\\BoardTrans\\logs），但排障时用户常整份贴给别人/
+    上传工单 —— 里面带原文就等于把敲过的字一起给了出去。
+    需要看内容时把 config 的 log_user_text 打开即可恢复截断预览。
+    """
+    if (cfg or config.load()).get("log_user_text"):
+        return text[:limit] + ("…" if len(text) > limit else "")
+    return f"<{len(text)} 字，内容已隐藏>"
+
+
 # ---------------- 快捷键冲突探测 ----------------
 
 _VK_SPECIAL = {
@@ -292,7 +305,7 @@ class HotkeyService:
             self._notify("没有取到文字", how)
             return
         log.info("取词成功(%s): %s | 按键后 %.3fs 完成取词",
-                 how, text[:60], self._since_hotkey())
+                 how, _preview(text, 60, cfg), self._since_hotkey())
 
         # 3) 翻译（全量翻译，不做字数截断 —— 2026-10-16 已移除字数上限功能）
         engine = self._get_engine()
@@ -331,7 +344,8 @@ class HotkeyService:
             "quality": quality, "seconds": round(cost, 3), "route": engine.last_stats.get("route", ""),
         }
         log.info("完成 %.2fs %s -> %s | %s | %s",
-                 cost, text[:30], result[:30], way, engine.last_stats)
+                 cost, _preview(text, 30, cfg), _preview(result, 30, cfg),
+                 way, engine.last_stats)
         self._notify(
             f"已翻译成{'英文' if target == 'en' else '日文'}（{cost:.2f}s）",
             result[:80],

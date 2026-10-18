@@ -19,9 +19,13 @@ import app.settings_window as sw                         # noqa: E402
 from app import ui_kit as ui                             # noqa: E402
 from app.service import HotkeyService                    # noqa: E402
 
-BEFORE_SRC = (r"C:\Users\yz050\.workbuddy\clipboard-images"
-              r"\clipboard-2026-10-01T09-39-01-399Z-ae9dc91f.png")
-DIAG = r"F:\shunyi\docs\_diag"
+# 修复前截图：路径不写死（2026-10-18 脱敏 + 可移植）
+# 可用环境变量 SHOWCASE_BEFORE_SRC 指定；不指定时默认从当前用户的家目录推导。
+BEFORE_SRC = os.environ.get("SHOWCASE_BEFORE_SRC") or os.path.join(
+    os.path.expanduser("~"), ".workbuddy", "clipboard-images",
+    "clipboard-2026-10-01T09-39-01-399Z-ae9dc91f.png")
+DIAG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "docs", "_diag")
 os.makedirs(DIAG, exist_ok=True)
 before_saved = os.path.join(DIAG, "说明框-修复前.png")
 if os.path.exists(BEFORE_SRC):

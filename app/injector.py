@@ -237,8 +237,3 @@ def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) 
             log.warning("剪贴板恢复失败")
         # 提示：Win+V 剪贴板历史里仍会留下一次译文记录，这是系统行为，无法程序化清除
     return True, "粘贴（剪贴板已还原）"
-
-
-def notify_user(title: str, message: str) -> None:
-    """控制台模式下的简易提示（托盘模式下由托盘气泡接管）。"""
-    print(f"[{title}] {message}", flush=True)

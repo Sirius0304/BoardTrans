@@ -70,3 +70,12 @@ secrets.json
 credentials.json
 *token*.txt
 *.token
+
+# ---- 运行时数据（2026-10-18 补）----
+# 正常运行时配置与日志都在 %LOCALAPPDATA%\BoardTrans，不在项目里；
+# 但如果有人用 BOARDTRANS_DATA_DIR=. 在本目录做开发调试，config.json 与日志
+# 就会落到项目根，里面含用户的快捷键/模型路径等偏好，不该进公开仓库。
+/config.json
+/config.json.tmp
+/config.json.broken-*
+/logs/

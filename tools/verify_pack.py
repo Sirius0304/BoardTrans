@@ -60,6 +60,8 @@ CHECKS = [
     ("app.service", "_restore_original", "失败路径统一回注原文"),
     ("app.models", "_cache_complete", "模型缓存只认精确字节数"),
     ("app.injector", "逐字输入未全部发出", "回写失败可感知"),
+    ("app.service", "_preview", "日志默认隐藏用户原文"),
+    ("app.config", "log_user_text", "日志隐私开关（默认关）"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。
@@ -87,18 +89,32 @@ def consts_of(code):
     """
     names, strings = set(), set()
 
+    def add_const(k):
+        """收集常量里的字符串；**元组/集合也要拆开**（2026-10-18 修的判据缺陷）。
+
+        Python 3.12+ 的"常量键字典"编译成 BUILD_CONST_KEY_MAP，所有键打包成
+        一个**元组常量**放进 co_consts。只认 `isinstance(k, str)` 的话，
+        DEFAULTS 里的键（hotkey / selection_probe_ms / log_user_text …）
+        一个都查不到 —— 会被误报成"配置项没进包"。
+        """
+        if isinstance(k, str):
+            strings.add(k)
+        elif isinstance(k, (tuple, list, frozenset, set)):
+            for item in k:
+                add_const(item)
+
     def walk(c):
-        # 三个池都要看（每个都踩过坑）：
+        # 四个池都要看（每个都踩过坑）：
         #   co_names    模块级/全局名字     —— PHASE_EXTRACT、_dl_high
         #   co_varnames 局部变量名         —— phase（函数参数）
-        #   co_consts   字符串字面量       —— "正在解压"
+        #   co_consts   字符串字面量/键元组 —— "正在解压"、("hotkey", "en", …)
         names.update(c.co_names)
         names.update(c.co_varnames)
         for k in c.co_consts:
-            if isinstance(k, str):
-                strings.add(k)
-            elif hasattr(k, "co_consts"):
+            if hasattr(k, "co_consts"):
                 walk(k)
+            else:
+                add_const(k)
     walk(code)
     return names | strings
 
