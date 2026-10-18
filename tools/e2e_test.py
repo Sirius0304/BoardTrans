@@ -174,8 +174,8 @@ def main() -> int:
             t2 = time.time()
             print(f"  [2] 翻译: {dst!r}   ({(t2-t1)*1000:.0f} ms)  路线={engine.last_stats.get('route')}")
 
-            way = injector.inject_text(dst, INJECT_MODE, True)
-            print(f"  [3] 回写({INJECT_MODE}): {way}")
+            ok, way = injector.inject_text(dst, INJECT_MODE, True)
+            print(f"  [3] 回写({INJECT_MODE}): {way}（成功={ok}）")
             time.sleep(0.5)
 
             final = get_edit_text(edit).strip()

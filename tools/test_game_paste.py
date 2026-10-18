@@ -10,6 +10,7 @@
 import os
 import sys
 import re
+import inspect
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -55,8 +56,12 @@ m = re.search(r"if not result:(.*?)return", ssrc, re.S)
 check("空结果分支存在", m is not None)
 if m:
     block = m.group(1)
-    check("空结果分支里调用了 inject_text 回注原文", "inject_text(text" in block)
-    check("回注用的是原文 text 而非 result", "inject_text(result" not in block)
+    # 2026-10-18：回注逻辑抽成 _restore_original（异常分支也要复用），
+    # 所以这里断言"调用了回注且传的是原文"，而不是具体的 inject_text 调用。
+    check("空结果分支里回注了原文", "_restore_original(text" in block)
+    check("回注用的是原文 text 而非 result", "_restore_original(result" not in block)
+    check("_restore_original 内部才调 inject_text",
+          "inject_text(text" in inspect.getsource(service.HotkeyService._restore_original))
 
 print("== 4) 粘贴等待按前台窗口自适应（2026-10-16 方案④）==")
 import time  # noqa: E402

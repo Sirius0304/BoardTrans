@@ -57,6 +57,9 @@ CHECKS = [
     ("app.injector", "_foreground_is_fullscreen", "全屏窗口判定"),
     ("app.capture", "COPY_RETRY_SETTLE", "复制重试前等修饰键物理抬起"),
     ("app.service", "已把原文放回原处", "空译文回注原文（防误删）"),
+    ("app.service", "_restore_original", "失败路径统一回注原文"),
+    ("app.models", "_cache_complete", "模型缓存只认精确字节数"),
+    ("app.injector", "逐字输入未全部发出", "回写失败可感知"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。

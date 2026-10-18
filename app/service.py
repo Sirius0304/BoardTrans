@@ -21,7 +21,7 @@ from typing import Callable
 
 import keyboard
 
-from . import config, models, notify as notify_mod, paths
+from . import capture, config, models, notify as notify_mod, paths
 from .capture import capture_selected_text
 from .console import safe_print
 from .engine import TranslationEngine
@@ -261,12 +261,26 @@ class HotkeyService:
         target = cfg.get("target_lang", "en")
         quality = cfg.get("quality", "fast")
 
-        # 0) 模型预热：与取词并行（2026-10-16 方案②）。
+        # 0) 模型就绪检查 —— **必须在取词之前**（2026-10-18 修「缺模型时吃掉用户输入」）。
+        # 取词成功后 _post_process 会先发 Delete 删掉原文；若把这项检查排在后面，
+        # 缺模型时每按一次快捷键就会删掉一段刚打的字，然后只弹一句"模型还没下载"。
+        # 历史教训：当年「字数上限 = 0（不翻译）」也是因为判断得太晚而丢数据，
+        # 现在的规则是：**任何"不会真的翻译"的提前返回，都必须发生在取词之前**。
+        missing = models.missing_for_target(target)
+        if missing:
+            names = "、".join(models.PACKAGES[k]["display"] for k in missing)
+            log.info("模型未就绪（未取词、未改动原文）: %s", missing)
+            self._notify("模型还没下载", f"缺少：{names}。已为你打开设置窗口，点「下载」即可。")
+            self._open_settings()
+            return
+
+        # 1) 模型预热：与取词并行（2026-10-16 方案②）。
         # 必须放在取词**之前** —— 取词那 0.3~0.4 秒正好用来后台读模型，
         # 取完词翻译时模型已就绪，不用再串行等加载。
+        # （模型缺失时上面已返回，不会白加载一次再抛异常。）
         self._warmup_engine_async()
 
-        # 1) 取词
+        # 2) 取词
         # probe_ms：判断"用户是否已选中"的窗口（默认 150ms，见 config.py）。
         # 短窗口让常态（没选区）按键后几乎立刻开始选字。
         text, how = capture_selected_text(
@@ -279,35 +293,38 @@ class HotkeyService:
             return
         log.info("取词成功(%s): %s | 按键后 %.3fs 完成取词",
                  how, text[:60], self._since_hotkey())
-        log.info("取词成功(%s): %s", how, text[:60])
-
-        # 2) 模型就绪检查（缺失则引导用户到设置窗口下载，而不是报错或静默失败）
-        missing = models.missing_for_target(target)
-        if missing:
-            names = "、".join(models.PACKAGES[k]["display"] for k in missing)
-            log.info("模型未就绪: %s", missing)
-            self._notify("模型还没下载", f"缺少：{names}。已为你打开设置窗口，点「下载」即可。")
-            self._open_settings()
-            return
 
         # 3) 翻译（全量翻译，不做字数截断 —— 2026-10-16 已移除字数上限功能）
         engine = self._get_engine()
         t0 = time.time()
-        result = engine.translate(text, target, quality)
+        try:
+            result = engine.translate(text, target, quality)
+        except Exception:  # noqa: BLE001
+            # 兜底（2026-10-18）：此时原文已被 Delete 删掉，异常一走了之就是丢字。
+            # 模型文件损坏、_probe_layout 认不出布局、内存不足都会走到这里。
+            log.exception("翻译失败（已尝试把原文放回原处）")
+            self._notify("翻译出错", "已把原文放回原处，详情见日志文件")
+            self._restore_original(text, cfg)
+            return
         cost = time.time() - t0
         if not result:
             # 兜底（2026-10-14）：取词成功后原文已被 Delete 删掉，
             # 若翻译为空就一走了之，用户的输入就永久丢了 —— 必须把原文贴回去。
             self._notify("翻译结果为空", "已把原文放回原处，请重试或换个说法")
-            inject_text(text, cfg.get("inject_mode", "paste"),
-                        bool(cfg.get("restore_clipboard", True)))
-            log.info("翻译结果为空，已回注原文（%d 字）", len(text))
+            self._restore_original(text, cfg)
             return
 
         # 4) 回写
-        way = inject_text(result, cfg.get("inject_mode", "paste"), bool(cfg.get("restore_clipboard", True)))
-        log.info("回写完成（方式=%s, %d 字）| 按键后总共 %.3fs", way, len(result),
-                 self._since_hotkey())
+        ok, way = inject_text(result, cfg.get("inject_mode", "paste"),
+                              bool(cfg.get("restore_clipboard", True)))
+        log.info("回写完成（方式=%s, %d 字, 成功=%s）| 按键后总共 %.3fs",
+                 way, len(result), ok, self._since_hotkey())
+        if not ok:
+            # 回写没走通（type 模式 SendInput 被吞 / 剪贴板被占用后降级也失败）：
+            # 原文已删、译文没进去。把**译文**留在剪贴板并明说，给用户一条找回路径
+            # （比放原文有用：原文用户还能重敲，译文重算要再等模型）。
+            self._notify("回写可能失败", f"{way}。译文已留在剪贴板，可手动 Ctrl+V 粘贴。")
+            capture.set_clipboard_text(result)
 
         self.last_result = {
             "source": text, "target": result, "lang": target,
@@ -401,6 +418,22 @@ class HotkeyService:
     def _since_hotkey(self) -> float:
         """距最近一次按下快捷键过了多少秒（非热键触发时返回 0，避免日志出现天文数字）。"""
         return (time.time() - self._hotkey_at) if self._hotkey_at else 0.0
+
+    def _restore_original(self, text: str, cfg: dict) -> None:
+        """把已被取词删掉的原文贴回原位置。
+
+        为什么要有它（2026-10-18）：「取词成功」意味着原文已经被 Delete 删掉了，
+        此后**任何**不产出译文的退出路径（翻译结果为空、翻译抛异常、回写失败……）
+        都必须把原文还回去，否则就是纯粹的数据丢失。
+        统一走这里，避免以后新增一条失败分支又忘了还。
+        """
+        ok, way = inject_text(text, cfg.get("inject_mode", "paste"),
+                              bool(cfg.get("restore_clipboard", True)))
+        log.info("已回注原文（%d 字，方式=%s，成功=%s）", len(text), way, ok)
+        if not ok:
+            # 连原文都贴不回去：至少留在剪贴板里，用户还能手动 Ctrl+V。
+            capture.set_clipboard_text(text)
+            self._notify("原文已放入剪贴板", "自动放回失败，请手动 Ctrl+V 粘贴。")
 
     def _open_settings(self) -> None:
         """打开设置窗口（由主程序注入入口；未注入时给出文字指引）。"""

@@ -98,8 +98,14 @@ def _make_key_input(scan: int, flags: int) -> _INPUT:
     return item
 
 
-def send_unicode_text(text: str, chunk_size: int = 48) -> None:
-    """用 Unicode 键盘事件逐段发送文本（不经过剪贴板）。"""
+def send_unicode_text(text: str, chunk_size: int = 48) -> bool:
+    """用 Unicode 键盘事件逐段发送文本（不经过剪贴板）。
+
+    返回是否**全部**发送成功（2026-10-18 修「回写失败不可感知」）：
+    过去 SendInput 返回值不足只写一条 warning，调用方拿不到信号，
+    于是一边"原文已删、译文没进去"，一边还给用户报成功。
+    游戏等不收注入键的环境里这种情况真实存在。
+    """
     events: list[_INPUT] = []
     for ch in text:
         if ch == "\n":
@@ -113,6 +119,7 @@ def send_unicode_text(text: str, chunk_size: int = 48) -> None:
             events.append(_make_key_input(unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
 
     struct_size = ctypes.sizeof(_INPUT)
+    ok = True
     for start in range(0, len(events), chunk_size):
         batch = events[start:start + chunk_size]
         array = (_INPUT * len(batch))(*batch)
@@ -121,7 +128,9 @@ def send_unicode_text(text: str, chunk_size: int = 48) -> None:
         if sent != len(batch):
             log.warning("SendInput 只发送了 %s/%s 个事件（错误码 %s，结构体大小 %s）",
                         sent, len(batch), ctypes.get_last_error(), struct_size)
+            ok = False
         time.sleep(0.005)
+    return ok
 
 
 # ---------------- 对外接口 ----------------
@@ -189,24 +198,32 @@ def paste_confirm_wait() -> float:
         else PASTE_CONFIRM_WAIT_DESKTOP
 
 
-def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) -> str:
-    """把译文写回当前光标位置。返回实际使用的方式说明。"""
+def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) -> tuple[bool, str]:
+    """把译文写回当前光标位置。返回 (是否可能成功, 方式说明)。
+
+    返回值的意义（2026-10-18 修「回写失败不可感知」）：
+      - paste 模式：True 表示剪贴板已写入且 Ctrl+V 已发出；**无法确证**目标程序
+        真的消费了这次粘贴（Windows 没有回执），所以是"可能成功"而不是"确认成功"；
+      - type 模式：True/False 是 SendInput 的真实回执（全部事件都发出去了才算成功）。
+    调用方在拿不到"确认"时要靠提示文案说清楚，不能再一律报成功。
+    """
     if not text:
-        return "译文为空，未写入"
+        return False, "译文为空，未写入"
 
     capture.release_modifiers()
 
     if mode == "type":
-        send_unicode_text(text)
-        return "逐字输入（未使用剪贴板）"
+        ok = send_unicode_text(text)
+        return ok, "逐字输入（未使用剪贴板）" if ok else "逐字输入未全部发出（目标程序可能吞了按键）"
 
     # paste 模式
     backup = capture.get_clipboard_text()
     if not capture.set_clipboard_text(text):
         # 剪贴板被占用时降级为逐字输入
         log.warning("剪贴板写入失败，降级为逐字输入")
-        send_unicode_text(text)
-        return "逐字输入（剪贴板被占用，已降级）"
+        ok = send_unicode_text(text)
+        return ok, "逐字输入（剪贴板被占用，已降级）" if ok \
+            else "逐字输入降级后仍未发出（剪贴板被占用 + 目标程序可能吞键）"
 
     time.sleep(PASTE_PREP_WAIT)
     keyboard.send("ctrl+v")
@@ -219,7 +236,7 @@ def inject_text(text: str, mode: str = "paste", restore_clipboard: bool = True) 
         if not capture.set_clipboard_text(backup):
             log.warning("剪贴板恢复失败")
         # 提示：Win+V 剪贴板历史里仍会留下一次译文记录，这是系统行为，无法程序化清除
-    return "粘贴（剪贴板已还原）"
+    return True, "粘贴（剪贴板已还原）"
 
 
 def notify_user(title: str, message: str) -> None:

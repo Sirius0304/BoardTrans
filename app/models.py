@@ -615,13 +615,29 @@ def download(key: str, progress_cb=None, retries: int = 3, cancel_event=None) ->
                                 cancel_event=cancel_event)
 
 
+def _cache_complete(dest: str, expected: int) -> bool:
+    """缓存里的包是否**真的完整**（2026-10-18 修「坏包死循环」）。
+
+    过去用的是 `getsize(dest) >= expected * 0.98`，两个后果都很难看：
+      1. zip 的中央目录在文件尾部，**99% 完成度的包必然是坏的**，但它通过了这道
+         检查 → 解压永远 BadZipFile；
+      2. 更糟的是它把这 99% 的文件当成"已下完"，**把断点续传的机会直接短路掉**了
+         —— 用户只能手工去缓存目录删文件才能解套。
+    现在只认"字节数完全一致"。多一个字节少一个字节都算不完整，交给续传/重下去修。
+    """
+    try:
+        return os.path.isfile(dest) and os.path.getsize(dest) == int(expected)
+    except OSError:
+        return False
+
+
 def _download_locked(key: str, progress_cb=None, retries: int = 3, cancel_event=None) -> str:
     info = PACKAGES[key]
     cache = paths.models_dir()
 
     if info["kind"] == "argos":
         dest = os.path.join(cache, f"{key}.argosmodel")
-        if os.path.exists(dest) and os.path.getsize(dest) >= info["size"] * 0.98:
+        if _cache_complete(dest, info["size"]):
             if progress_cb:
                 # 包已存在（换源失败后重试、或上次下完没装完）：直接报到 100%。
                 # 这里必须显式给 100%，否则界面会停在旧进度上直到"已下载"才跳。
@@ -746,7 +762,21 @@ def ensure(key: str, progress_cb=None, cancel_event=None) -> str:
             return model_dir(key)
         prog = _Progress(progress_cb)
         download(key, progress_cb=prog, cancel_event=cancel_event)
-        return install(key, progress_cb=prog)
+        try:
+            return install(key, progress_cb=prog)
+        except zipfile.BadZipFile:
+            # 坏包自愈（2026-10-18）：缓存里的包被截断/写坏时解压必然失败，
+            # 而"包已存在"的短路会让每次重试都命中同一份坏文件 —— 用户无解。
+            # 这里删掉坏包重下一次；只给一次机会，第二次仍坏就如实抛出
+            # （那通常意味着文件源本身有问题，反复重下没有意义）。
+            archive = os.path.join(paths.models_dir(), f"{key}.argosmodel")
+            log.warning("模型包损坏（%s），已删除并重新下载一次", archive)
+            try:
+                os.remove(archive)
+            except OSError:
+                log.exception("删除损坏的模型包失败（将按原样重试）")
+            download(key, progress_cb=prog, cancel_event=cancel_event)
+            return install(key, progress_cb=prog)
 
 
 def _looks_like_model_package(filename: str, key: str) -> bool:
