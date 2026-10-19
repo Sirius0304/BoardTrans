@@ -161,7 +161,18 @@ def save(cfg: dict) -> None:
             json.dump(payload, f, ensure_ascii=False, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)   # 原子替换，断电也不会写坏原文件
+        # 原子替换，断电也不会写坏原文件。
+        # 失败重试（2026-10-19）：Windows 上杀软/索引器会短暂占用刚写完的 .tmp，
+        # 此时 os.replace 抛 PermissionError —— 实测发版回归时就撞到过一次。
+        # 重试 3 次（每次 50ms）足以跨过这种瞬时锁；仍失败才如实抛出。
+        for attempt in range(3):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.05)
         _cache = payload
         # 记下自己写出来的文件指纹，避免紧接着被 load_if_changed() 当成"外部改动"再读一次盘
         try:

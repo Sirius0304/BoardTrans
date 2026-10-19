@@ -32,12 +32,14 @@ import urllib.request
 import zipfile
 from collections import deque
 
-from . import paths
+from . import __version__, paths
 from .logger import get_logger
 
 log = get_logger()
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BoardTrans/1.0"
+# 版本号统一从 app.__version__ 取（2026-10-19）：避免这里写死一个、
+# __init__.py 写另一个，发布时对不上。
+USER_AGENT = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) BoardTrans/{__version__}"
 
 # ---------------------------------------------------------------------------
 # 下载参数

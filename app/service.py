@@ -22,6 +22,7 @@ from typing import Callable
 import keyboard
 
 from . import capture, config, models, notify as notify_mod, paths
+from . import __version__
 from .capture import capture_selected_text
 from .console import safe_print
 from .engine import TranslationEngine
@@ -177,7 +178,7 @@ class HotkeyService:
         self._worker = threading.Thread(target=self._worker_loop, name="shunyi-worker", daemon=True)
         self._worker.start()
         self.register_hotkey()
-        log.info("服务已启动 | %s", paths.describe())
+        log.info("服务已启动 v%s | %s", __version__, paths.describe())
         threading.Thread(target=self._background_preload, name="shunyi-preload", daemon=True).start()
         threading.Thread(target=self._idle_watchdog, name="shunyi-idle", daemon=True).start()
 

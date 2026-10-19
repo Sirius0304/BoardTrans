@@ -145,6 +145,26 @@ def main():
     check("「取词成功」日志只打一次", handler.count('log.info("取词成功') == 1,
           str(handler.count('log.info("取词成功')))
 
+    print("\n[6] 配置落盘：瞬时文件锁要能重试（杀软/索引器）")
+    from app import config as config_mod
+    real_replace = config_mod.os.replace
+    calls = []
+
+    def flaky_replace(src, dst):
+        calls.append(1)
+        if len(calls) < 3:                      # 前两次模拟"文件被占用"
+            raise PermissionError("模拟杀软占用")
+        return real_replace(src, dst)
+
+    saved_cfg = config_mod.load()
+    try:
+        config_mod.os.replace = flaky_replace
+        config_mod.save(saved_cfg)
+    finally:
+        config_mod.os.replace = real_replace
+    check("PermissionError 会重试并最终成功", len(calls) == 3, str(len(calls)))
+    check("重试后配置仍可读回", bool(config_mod.load(force=True)))
+
     print()
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     for f in FAIL:

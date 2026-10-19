@@ -62,6 +62,7 @@ CHECKS = [
     ("app.injector", "逐字输入未全部发出", "回写失败可感知"),
     ("app.service", "_preview", "日志默认隐藏用户原文"),
     ("app.config", "log_user_text", "日志隐私开关（默认关）"),
+    ("app.models", "BoardTrans/", "UA 的版本号由 __version__ 派生（不再写死）"),
 ]
 
 # 反向检查：这些名字**不该**出现在包里（改动以"删代码"为主时用它）。

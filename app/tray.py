@@ -22,7 +22,7 @@ import threading
 import pystray
 from pystray import Menu, MenuItem
 
-from . import config, icon, notify as notify_mod, paths
+from . import __version__, config, icon, notify as notify_mod, paths
 from .logger import get_logger
 
 log = get_logger()
@@ -39,7 +39,7 @@ class TrayApp:
         self.icon = pystray.Icon(
             "shunyi",
             icon.ICON_ENABLED,
-            "键译 - 打字即翻译",
+            f"键译 v{__version__} - 打字即翻译",
             menu=self._build_menu(),
         )
         # 只注入"实际怎么发"（气泡），不注入"要不要发" ——
