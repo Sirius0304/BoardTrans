@@ -70,6 +70,8 @@ CHECKS = [
 # 2026-10-16 整体移除「翻译字数上限」功能 —— 相关符号若还在包里就是残留。
 FORBIDDEN = [
     ("app.dialogs", "_accent_color", "弹窗左侧竖线取色函数（已随竖线一起删除）"),
+    ("app.tray", "使用说明", "托盘菜单项（2026-10-19 按主人要求删除）"),
+    ("app.tray", "_on_help", "「使用说明」的点击处理（已一并删除）"),
     ("app.config", "clamp_translate_chars", "译文上限夹紧（功能已整体移除）"),
     ("app.engine", "_translate_capped", "截断翻译（功能已整体移除）"),
     ("app.engine", "TRUNCATION_MARK", "截断省略号（功能已整体移除）"),

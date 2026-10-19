@@ -74,6 +74,18 @@ def main():
             offenders.append(d)
     check("docs/*.md 无本机用户名", not offenders, str(offenders))
 
+    print("\n[6] 托盘菜单：已删「使用说明」，其余项保持不变")
+    tray_src = read("app/tray.py")
+    check("菜单里没有「使用说明」", "使用说明" not in tray_src, "")
+    check("_on_help 处理器已删除", "_on_help" not in tray_src, "")
+    # 其余菜单项必须原样都在（删一项不能顺手改别的）
+    for label in ("目标语言", "翻译档位", "启用翻译", "设置…", "打开配置文件",
+                  "打开数据目录", "打开日志", "退出"):
+        check(f"菜单项「{label}」仍在", f'MenuItem("{label}"' in tray_src
+              or f'MenuItem(\n                "{label}"' in tray_src, "")
+    check("分节符数量未变（3 处 refresh）", tray_src.count("refresh") >= 3,
+          str(tray_src.count("refresh")))
+
     print()
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     for f in FAIL:

@@ -96,7 +96,6 @@ class TrayApp:
             MenuItem("打开配置文件", self._on_open_config),
             MenuItem("打开数据目录", self._on_open_folder),
             MenuItem("打开日志", self._on_open_log),
-            MenuItem("使用说明", self._on_help),
             refresh,
             MenuItem("退出", self._on_quit),
         )
@@ -140,10 +139,6 @@ class TrayApp:
             self.notify("暂无日志", "还没有产生日志文件")
             return
         self._open_path(paths.log_path())
-
-    def _on_help(self, _icon=None, _item=None):
-        hotkey = config.get("hotkey")
-        self.notify(f"用法：打字后按 {hotkey}", "译文会替换你刚输入的内容。托盘菜单可切换语言与档位。")
 
     def _on_quit(self, _icon=None, _item=None):
         try:
