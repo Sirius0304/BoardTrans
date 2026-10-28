@@ -17,10 +17,12 @@
 import os
 import sys
 import time
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import capture, config   # noqa: E402
+from tools.diag_capture_latency import FakeClipboard   # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -67,6 +69,40 @@ class FakeEditor:
             return self.rows[self.o][:self.c]
         parts = self.rows[self.t:self.o] + [self.rows[self.o][:self.c]]
         return "\n".join(parts)
+
+
+def run_selection_probe(responses=(), timeout=None, attempts=None, seq_available=True,
+                        copy_delay=0.0, selection=True):
+    """使用真实复制/轮询逻辑；哨兵和目标程序的每次写入都会递增序列号。"""
+    clip = FakeClipboard()
+    pending = iter(responses)
+    sent = []
+
+    def send(key):
+        sent.append((key, time.monotonic()))
+        response = next(pending, None)
+        if response is not None:
+            clip.schedule(response, copy_delay)
+
+    def write(text):
+        clip.set(text)
+        return True
+
+    with patch.object(capture.keyboard, "send", side_effect=send), \
+            patch.object(capture, "set_clipboard_text", side_effect=write), \
+            patch.object(capture, "get_clipboard_text", side_effect=clip.get), \
+            patch.object(capture, "clipboard_seq", side_effect=clip.seq_no if seq_available else lambda: 0), \
+            patch.object(capture, "_wait_for_clipboard_change", wraps=capture._wait_for_clipboard_change) as wait, \
+            patch.object(capture, "log") as logger:
+        started = time.monotonic()
+        if selection:
+            text = capture._copy_selection("s", timeout=timeout, attempts=attempts)
+        else:
+            text = capture._copy_once("s")
+        elapsed = time.monotonic() - started
+
+    messages = [call.args[0] % call.args[1:] for call in logger.info.call_args_list]
+    return text, sent, clip, wait.call_args_list, messages, elapsed
 
 
 def _probe_config(payload_json: str) -> str:
@@ -216,38 +252,46 @@ def main():
           str(config.DEFAULTS.get("selection_probe_ms")))
     check("有剪贴板序列号判定（零成本快判）", callable(getattr(capture, "clipboard_seq", None)))
 
-    calls = []
-    saved_deps = (capture.clipboard_seq, capture._copy_once, capture.keyboard.send,
-                  capture.set_clipboard_text, capture.get_clipboard_text)
-    capture.clipboard_seq = lambda: 1000                 # 序列号永不变 = 没有内容写入
-    capture.keyboard.send = lambda k: None
-    capture.set_clipboard_text = lambda t: True
-    capture.get_clipboard_text = lambda: ""
-    capture._copy_once = lambda sentinel, timeout=None: (calls.append(timeout), "")[1]
-    try:
-        t0 = time.monotonic()
-        got = capture._copy_selection("s")
-        fast_dt = time.monotonic() - t0
-        fast_calls = list(calls)
-
-        calls.clear()
-        t1 = time.monotonic()
-        capture._copy_selection("s", timeout=1.2)        # 保守档（模拟 selection_probe_ms=1200）
-        slow_dt = time.monotonic() - t1
-        slow_calls = list(calls)
-    finally:
-        (capture.clipboard_seq, capture._copy_once, capture.keyboard.send,
-         capture.set_clipboard_text, capture.get_clipboard_text) = saved_deps
-
+    got, sent, clip, waits, logs, fast_dt = run_selection_probe()
     check("无选区时快速探测返回空", got == "", repr(got))
-    check("快速探测只复制 1 次（旧实现 2 次）", len(fast_calls) == 1, str(fast_calls))
+    check("快速探测只复制 1 次（旧实现 2 次）", len(sent) == 1, str(sent))
+    check("写哨兵确实递增序列号（不能用恒定序列号桩）", clip.seq == 2, str(clip.seq))
     check("快速探测用的是 150ms 窗口",
-          bool(fast_calls) and abs(fast_calls[0] - capture.SELECTION_PROBE_TIMEOUT) < 1e-9,
-          str(fast_calls))
+          len(waits) == 1 and waits[0].args[1] == capture.SELECTION_PROBE_TIMEOUT, str(waits))
     check("快速探测耗时 < 0.5s（旧实现约 2.7s）", fast_dt < 0.5, f"{fast_dt * 1000:.0f}ms")
-    check("保守档（窗口 >=600ms）自动恢复两次尝试", len(slow_calls) == 2, str(len(slow_calls)))
-    check("保守档两次尝试之间的等待 ≈ 重试等待",
-          slow_dt >= capture.COPY_RETRY_SETTLE, f"{slow_dt * 1000:.0f}ms")
+
+    got, sent, clip, waits, logs, slow_dt = run_selection_probe(timeout=0.6)
+    check("保守档无外部写入时也只探测一次", got == "" and len(sent) == 1, str(sent))
+    check("保守档快判排除哨兵自身的序列号增量", clip.seq == 2, str(clip.seq))
+    check("无外部写入时日志确实报告序列号未变",
+          any("剪贴板序列号未变" in line for line in logs), str(logs))
+
+    got, sent, clip, waits, logs, elapsed = run_selection_probe(["用户选中的内容"], copy_delay=0.03)
+    check("快速复制的真实选区仍能命中", got == "用户选中的内容" and len(sent) == 1, repr(got))
+    check("选区复制与写哨兵分别记账", clip.seq == 3, str(clip.seq))
+
+    got, sent, clip, waits, logs, elapsed = run_selection_probe(["", "第二次复制成功"], timeout=0.6)
+    check("序列号有变化但无文本时保留第二次探测", got == "第二次复制成功" and len(sent) == 2,
+          f"{got!r} copies={len(sent)}")
+    check("每次重试重新以本次哨兵写入后为基准", clip.seq == 5, str(clip.seq))
+    check("两次探测之间仍等待修饰键物理抬起",
+          len(sent) == 2 and sent[1][1] - sent[0][1] >= 0.6 + capture.COPY_RETRY_SETTLE,
+          f"{elapsed * 1000:.0f}ms")
+
+    got, sent, clip, waits, logs, elapsed = run_selection_probe(["", ""], timeout=0.01, attempts=2)
+    check("两次外部空写入后探测正常返回空", got == "" and len(sent) == 2, str(sent))
+    check("序列号变化时日志不再谎报未变",
+          any("剪贴板序列号已变化" in line for line in logs) and
+          not any("剪贴板序列号未变" in line for line in logs), str(logs))
+
+    got, sent, clip, waits, logs, elapsed = run_selection_probe(timeout=0.6, seq_available=False)
+    check("序列号接口返回 0 时保守档回退两次超时探测", got == "" and len(sent) == 2, str(sent))
+    check("序列号不可用时日志不再谎报未变",
+          any("剪贴板序列号不可用" in line for line in logs) and
+          not any("剪贴板序列号未变" in line for line in logs), str(logs))
+
+    got, sent, clip, waits, logs, elapsed = run_selection_probe(["整段复制内容"], selection=False)
+    check("普通复制 _copy_once 继续返回文本而非元组", got == "整段复制内容", repr(got))
 
     print()
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")

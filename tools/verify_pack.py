@@ -45,6 +45,8 @@ CHECKS = [
     ("app.capture", "PARAGRAPH_EXTEND_KEY", "一键扩段（Ctrl+Shift+Up）"),
     ("app.capture", "SELECTION_PROBE_TIMEOUT", "选区快速探测窗口（150ms）"),
     ("app.capture", "clipboard_seq", "剪贴板序列号零成本判定"),
+    ("app.capture", "_start_copy", "写哨兵后、Ctrl+C 前记录序列号基准"),
+    ("app.capture", "seq_state", "探测日志区分序列号未变、已变化与不可用"),
     ("app.capture", "_copy_selection", "复制选中内容带重试"),
     ("app.engine", "ensure_loaded", "模型预热接口（与取词并行）"),
     ("app.service", "_warmup_engine_async", "按键后后台预热模型"),

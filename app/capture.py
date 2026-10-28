@@ -140,15 +140,22 @@ def _wait_for_clipboard_change(sentinel: str, timeout: float = COPY_TIMEOUT) -> 
         if current and current != sentinel:
             return current
         time.sleep(POLL_INTERVAL)
-    # 超时说明 Ctrl+C 没被目标程序消费（游戏里常见：注入键被忽略/被当成组合键）。
-    log.info("复制超时：Ctrl+C 后剪贴板没有变化（目标程序可能忽略了注入的按键）")
+    # 超时只说明未读到有效文本，也可能收到空内容或仍是哨兵值。
+    log.info("复制超时：Ctrl+C 后未读到有效文本（目标程序可能忽略了注入的按键）")
     return ""
+
+
+def _start_copy(sentinel: str) -> int:
+    """写哨兵后、发 Ctrl+C 前记录序列号，排除哨兵自身的写入。"""
+    set_clipboard_text(sentinel)
+    seq0 = clipboard_seq()
+    keyboard.send("ctrl+c")
+    return seq0
 
 
 def _copy_once(sentinel: str, timeout: float = COPY_TIMEOUT) -> str:
     """写哨兵 → 发 Ctrl+C → 等剪贴板变化。返回复制到的文本（失败为空串）。"""
-    set_clipboard_text(sentinel)
-    keyboard.send("ctrl+c")
+    _start_copy(sentinel)
     return _wait_for_clipboard_change(sentinel, timeout)
 
 
@@ -159,33 +166,38 @@ def _copy_selection(sentinel: str, timeout: float | None = None,
     与旧实现的差别：旧版等 1.2s × 2 次（含重试等待合计约 2.7s），而"没有选中"
     恰恰是常态 —— 打完字直接按快捷键，每次都白等这么久才开始选字。
     现在：
-      1. 记下剪贴板序列号（GetClipboardSequenceNumber，读取零成本）；
+      1. 写哨兵后、发 Ctrl+C 前记下剪贴板序列号（每次尝试独立取基准）；
       2. 短等 SELECTION_PROBE_TIMEOUT，期间一旦有内容就立即返回；
       3. 超时且序列号**一动没动** → 判定"目标程序根本没往剪贴板写东西"
          = 用户没选中，立刻转自动取段，不再做第二次探测。
 
     精确性：真正有选区时 Ctrl+C 通常在 10~60ms 内完成复制，150ms 足够；
     个别超慢应用把 config.selection_probe_ms 调大即可恢复保守行为
-    （≥600ms 时自动恢复"两次尝试 + 重试等待"的老策略）。
+    （≥600ms 时允许"两次尝试 + 重试等待"，序列号未变时跳过重试）。
     """
     timeout = SELECTION_PROBE_TIMEOUT if timeout is None else timeout
     if attempts is None:
         attempts = COPY_ATTEMPTS if timeout >= 0.6 else SELECTION_PROBE_ATTEMPTS
     t0 = time.time()
-    seq0 = clipboard_seq()
+    seq_state = "不可用"
     for attempt in range(attempts):
         if attempt:
             time.sleep(COPY_RETRY_SETTLE)   # 等手指物理松开修饰键
-        text = _copy_once(sentinel, timeout)
+        seq0 = _start_copy(sentinel)
+        text = _wait_for_clipboard_change(sentinel, timeout)
         if text:
             log.info("选区探测命中（%d 字，%.0fms）", len(text), (time.time() - t0) * 1000)
             return text
-        if clipboard_seq() == seq0 and attempt + 1 >= attempts:
-            break                           # 没有任何内容写进剪贴板 → 判定未选中
+        seq1 = clipboard_seq()
+        seq_state = "不可用"
+        if seq0 and seq1:                    # 0 表示接口不可用，不能当作未变化
+            seq_state = "未变" if seq1 == seq0 else "已变化"
+            if seq1 == seq0:
+                break                       # 只有哨兵写入 → 无需第二次探测
         if attempt + 1 < attempts:
             time.sleep(0.08)
-    log.info("选区探测未命中（%.0fms，剪贴板序列号未变）→ 判定未选中，转自动取段",
-             (time.time() - t0) * 1000)
+    log.info("选区探测未命中（%.0fms，剪贴板序列号%s）→ 未取得选区，转自动取段",
+             (time.time() - t0) * 1000, seq_state)
     return ""
 
 
